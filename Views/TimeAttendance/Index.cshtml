@@ -324,7 +324,7 @@
                     <button type="button" class="btn btn-secondary btn-sm shadow-sm" id="btn-reset-filters" onclick="resetFilters()">
                         <i class="fas fa-undo fa-sm mr-1"></i> Reset Filters
                     </button>
-                    <button type="button" class="btn btn-primary btn-sm shadow-sm" onclick="applyClientSideFilters()">
+                    <button type="button" class="btn btn-primary btn-sm shadow-sm" id="btn-apply-filters" onclick="applyFilters()">
                         <i class="fas fa-filter fa-sm mr-1"></i> Apply Filters
                     </button>
                 </div>
@@ -336,9 +336,12 @@
     <div class="card shadow mb-4">
         <div class="card-header py-3 d-flex align-items-center justify-content-between">
             <h6 class="m-0 font-weight-bold text-primary">
-                <i class="fas fa-table mr-1"></i> Timesheet Records Grid &mdash; Aug-26
+                <i class="fas fa-table mr-1"></i> Timesheet Records Grid
             </h6>
-            <span class="badge badge-light text-muted font-weight-normal" id="lbl-records-count">Loading data from Jibble...</span>
+            <div class="d-flex align-items-center" style="gap: 6px;">
+                <span class="badge badge-light text-muted font-weight-normal" id="lbl-active-range"></span>
+                <span class="badge badge-light text-muted font-weight-normal" id="lbl-records-count">Loading data from Jibble...</span>
+            </div>
         </div>
         <div class="card-body p-2 p-md-3">
             <div id="grid-loading" class="loading-overlay">
@@ -391,13 +394,21 @@
     var loadSecondsElapsed = 0;
     var defaultFromDate = '@(ViewBag.DefaultFromDate ?? "2026-08-01")';
     var defaultToDate = '@(ViewBag.DefaultToDate ?? "2026-08-31")';
+    // Tracks the date range actually loaded into allRowsData right now, so we only go back to the
+    // server when the requested range changes, instead of re-fetching on every filter tweak.
+    var loadedFromDate = null;
+    var loadedToDate = null;
 
     $(document).ready(function() {
         initDataTable();
         loadTimesheetData(false);
 
-        // Filter triggers
-        $('#filter-from-date, #filter-to-date, #filter-employee, #filter-department, #filter-status, #filter-only-absence').on('change', function() {
+        // Employee/Department/Status/Absence are pure client-side filters over whatever date range is
+        // already loaded, so they can re-filter instantly on change. From/To Date changes the actual
+        // dataset that needs to be fetched, so they're intentionally left out here and only take effect
+        // when "Apply Filters" is clicked (see applyFilters()) — that avoids firing a Jibble API call on
+        // every keystroke/click inside the date pickers.
+        $('#filter-employee, #filter-department, #filter-status, #filter-only-absence').on('change', function() {
             applyClientSideFilters();
         });
     });
@@ -483,6 +494,9 @@
                 try {
                     if (res && res.success && Array.isArray(res.data)) {
                         allRowsData = res.data;
+                        loadedFromDate = fromDateVal;
+                        loadedToDate = toDateVal;
+                        updateActiveRangeBadge();
                         populateFilters(allRowsData);
                         applyClientSideFilters();
 
@@ -524,6 +538,40 @@
                 }
             }
         });
+    }
+
+    // Formats a 'yyyy-MM-dd' input value as 'dd-MMM-yyyy' (matching the grid's own date column) without
+    // going through the Date object, so there's no local-timezone off-by-one risk on the display.
+    function formatDateDisplay(isoDate) {
+        var monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        var parts = (isoDate || '').split('-');
+        if (parts.length !== 3) return isoDate || '';
+        var y = parts[0], m = parseInt(parts[1], 10), d = parts[2];
+        if (!m || m < 1 || m > 12) return isoDate;
+        return d + '-' + monthNames[m - 1] + '-' + y;
+    }
+
+    function updateActiveRangeBadge() {
+        if (!loadedFromDate || !loadedToDate) {
+            $('#lbl-active-range').text('');
+            return;
+        }
+        $('#lbl-active-range').html('<i class="fas fa-calendar-alt mr-1"></i>' + formatDateDisplay(loadedFromDate) + ' &ndash; ' + formatDateDisplay(loadedToDate));
+    }
+
+    // Called by the "Apply Filters" button. Employee/Department/Status/Absence are always applied
+    // client-side against whatever is already loaded, but From/To Date defines *what* needs to be loaded
+    // in the first place — if it no longer matches the currently loaded range (e.g. the user extended it
+    // into another month), fetch that range from the server first instead of silently filtering stale data.
+    function applyFilters() {
+        var fromDateVal = $('#filter-from-date').val() || defaultFromDate;
+        var toDateVal = $('#filter-to-date').val() || defaultToDate;
+
+        if (fromDateVal !== loadedFromDate || toDateVal !== loadedToDate) {
+            loadTimesheetData(false);
+        } else {
+            applyClientSideFilters();
+        }
     }
 
     // Member Code uniquely identifies an employee in Jibble; Full Name does not (two employees can share
@@ -606,7 +654,10 @@
         $('#filter-department').val('');
         $('#filter-status').val('');
         $('#filter-only-absence').prop('checked', false);
-        applyClientSideFilters();
+        // Route through applyFilters() rather than filtering directly: if the grid currently has a
+        // different range loaded (e.g. the user had extended it into another month), resetting the date
+        // inputs needs to re-fetch the default range too, not just re-filter whatever is still in memory.
+        applyFilters();
     }
 
     function renderGridRows(rows) {
