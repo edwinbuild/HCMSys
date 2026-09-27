@@ -346,6 +346,92 @@ namespace HCMSys.Controllers
             return BuildPdfResult("OvertimeRosterPdf", viewModel, $"Overtime_Roster_{effectiveFromDate}_to_{effectiveToDate}.pdf");
         }
 
+        /// <summary>
+        /// CSV equivalent of ExportAttendanceReportPdf — same rows, same filters, no wkhtmltopdf dependency.
+        /// Useful for local development (PDF export requires a wkhtmltopdf binary the Dockerfile installs;
+        /// this doesn't need it) and for anyone who just wants the numbers in a spreadsheet-friendly format.
+        /// </summary>
+        [HttpGet]
+        public async Task<IActionResult> ExportAttendanceReportCsv(
+            string? fromDate = null,
+            string? toDate = null,
+            string employee = "",
+            string department = "",
+            string status = "",
+            bool onlyAbsence = false)
+        {
+            var result = await _jibbleService.GetTimesheetGridRowsAsync(fromDate, toDate, false);
+            string effectiveFromDate = result.EffectiveFromDate;
+            string effectiveToDate = result.EffectiveToDate;
+            var rows = ApplyGridFilters(result.Rows, effectiveFromDate, effectiveToDate, employee, department, status, onlyAbsence);
+            var summary = JibbleReportBuilder.BuildAttendanceSummary(rows, effectiveFromDate, effectiveToDate);
+
+            var sb = new StringBuilder();
+            sb.AppendLine("Full Name,Member Code,Group,Manager(s),Expected Days of Work,Regular Days Work,Absentees,Time Off,Rest Day Worked,Public Holiday Worked");
+            foreach (var r in summary)
+            {
+                sb.AppendLine(string.Join(",",
+                    EscapeCsv(r.FullName),
+                    EscapeCsv(r.MemberCode),
+                    EscapeCsv(r.Group),
+                    EscapeCsv(r.Managers),
+                    r.ExpectedDaysOfWork,
+                    r.RegularDaysWork,
+                    r.Absentees,
+                    r.TimeOff,
+                    r.RestDayWorked,
+                    r.PublicHolidayWorked
+                ));
+            }
+
+            var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
+            string fileName = $"Attendance_Report_{effectiveFromDate}_to_{effectiveToDate}.csv";
+            return File(bytes, "text/csv", fileName);
+        }
+
+        /// <summary>
+        /// CSV equivalent of ExportOvertimeRosterPdf — see JibbleReportBuilder.BuildOvertimeRoster for what
+        /// is and isn't real Jibble data here. No wkhtmltopdf dependency, unlike the PDF version.
+        /// </summary>
+        [HttpGet]
+        public async Task<IActionResult> ExportOvertimeRosterCsv(
+            string? fromDate = null,
+            string? toDate = null,
+            string employee = "",
+            string department = "",
+            string status = "",
+            bool onlyAbsence = false)
+        {
+            var result = await _jibbleService.GetTimesheetGridRowsAsync(fromDate, toDate, false);
+            string effectiveFromDate = result.EffectiveFromDate;
+            string effectiveToDate = result.EffectiveToDate;
+            var rows = ApplyGridFilters(result.Rows, effectiveFromDate, effectiveToDate, employee, department, status, onlyAbsence);
+            var roster = JibbleReportBuilder.BuildOvertimeRoster(rows);
+
+            var sb = new StringBuilder();
+            sb.AppendLine("Full Name,Group,Time Off Policy,Compensation,Start Date,Start Time,End Time,Duration,Reason,Requested On,Status");
+            foreach (var r in roster)
+            {
+                sb.AppendLine(string.Join(",",
+                    EscapeCsv(r.FullName),
+                    EscapeCsv(r.Group),
+                    EscapeCsv(r.TimeOffPolicy),
+                    EscapeCsv(r.Compensation),
+                    EscapeCsv(r.StartDate),
+                    EscapeCsv(r.StartTime),
+                    EscapeCsv(r.EndTime),
+                    EscapeCsv(r.Duration),
+                    EscapeCsv(r.Reason),
+                    EscapeCsv(r.RequestedOn),
+                    EscapeCsv(r.Status)
+                ));
+            }
+
+            var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
+            string fileName = $"Overtime_Roster_{effectiveFromDate}_to_{effectiveToDate}.csv";
+            return File(bytes, "text/csv", fileName);
+        }
+
         /// <summary>Shared filter pass reused by the Excel export and both PDF reports, so the three exports
         /// never drift out of sync on what "apply these filters" means.</summary>
         private static List<JibbleTimesheetGridRowDto> ApplyGridFilters(
