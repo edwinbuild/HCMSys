@@ -1,0 +1,131 @@
+@model OvertimeRosterPdfViewModel
+@{
+    // Metadata rides inside the Model (not ViewBag) — Rotativa's ViewAsPdf does not reliably carry
+    // ViewBag/ViewData through to the HTML it actually renders (verified: it silently drops them even
+    // though the Model survives), so everything this view needs must come through @Model itself.
+    Layout = null;
+    var rows = Model.Rows;
+    var fromDisplay = Model.Meta.FromDateDisplay;
+    var toDisplay = Model.Meta.ToDateDisplay;
+    var departmentFilter = Model.Meta.DepartmentFilter;
+    var employeeFilter = Model.Meta.EmployeeFilter;
+}
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Overtime Roster</title>
+<style>
+    /* wkhtmltopdf renders with an old WebKit build with unreliable flexbox/grid support, so this whole
+       page intentionally sticks to plain block/table/float layout only — the one thing verified to render
+       correctly across the actual PDF engine, not just a regular browser preview. */
+    body { font-family: Arial, Helvetica, sans-serif; font-size: 8pt; color: #333; margin: 22px; }
+    .header { margin-bottom: 4px; overflow: hidden; }
+    .header .title { float: left; }
+    .header .brand { float: right; }
+    .title, .brand { font-size: 17pt; font-weight: bold; color: #333; margin: 0; }
+    .brand { color: #E07B24; }
+    .subtitle { font-size: 9pt; font-weight: bold; margin-bottom: 14px; clear: both; }
+    /* table-layout:fixed + explicit <col> widths: without them wkhtmltopdf's table auto-sizing gives the
+       free-text Reason column enough width to avoid wrapping, blowing the whole page out to many times the
+       Letter page width — wkhtmltopdf then "smart shrinks" the entire page to fit, shrinking it vertically
+       too and cramming everything onto one illegible page. Fixed widths force wrapping instead. */
+    table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    table.grid th, table.grid td { word-wrap: break-word; overflow-wrap: break-word; }
+    table.grid thead th {
+        background: #4E73DF; color: #fff; text-align: left;
+        font-size: 6.8pt; text-transform: uppercase; padding: 4px 4px;
+    }
+    table.grid tbody td { border-bottom: 1px solid #eee; padding: 3px 4px; font-size: 7.6pt; vertical-align: top; }
+    table.grid tbody tr:nth-child(even) { background: #fafafa; }
+    .num { text-align: center; }
+    .empty-row td { text-align: center; color: #888; padding: 14px 4px; font-style: italic; }
+    .filters { margin-top: 16px; font-size: 7.6pt; }
+    .filters .filters-title { font-weight: bold; color: #4E73DF; }
+    .note { margin-top: 10px; font-size: 7pt; color: #777; font-style: italic; border-top: 1px solid #ddd; padding-top: 6px; }
+</style>
+</head>
+<body>
+    <div class="header">
+        <div class="title">Overtime Roster</div>
+        <div class="brand">MENA HR</div>
+    </div>
+    <div class="subtitle">Report Period From @fromDisplay To @toDisplay</div>
+
+    <table class="grid">
+        <colgroup>
+            <col style="width:14%" />
+            <col style="width:12%" />
+            <col style="width:10%" />
+            <col style="width:8%" />
+            <col style="width:8%" />
+            <col style="width:7%" />
+            <col style="width:7%" />
+            <col style="width:7%" />
+            <col style="width:19%" />
+            <col style="width:8%" />
+            <col style="width:8%" />
+        </colgroup>
+        <thead>
+            <tr>
+                <th>Full Name</th>
+                <th>Group</th>
+                <th>Time Off Policy</th>
+                <th>Compensation</th>
+                <th>Start Date</th>
+                <th>Start Time</th>
+                <th>End Time</th>
+                <th>Duration</th>
+                <th>Reason</th>
+                <th>Requested On</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+@if (rows.Count == 0)
+{
+            <tr class="empty-row"><td colspan="11">No rest-day or public-holiday worked instances found for the selected range/filters.</td></tr>
+}
+else
+{
+@foreach (var r in rows)
+{
+            <tr>
+                <td>@r.FullName</td>
+                <td>@r.Group</td>
+                <td>@r.TimeOffPolicy</td>
+                <td>@r.Compensation</td>
+                <td>@r.StartDate</td>
+                <td class="num">@r.StartTime</td>
+                <td class="num">@r.EndTime</td>
+                <td class="num">@r.Duration</td>
+                <td>@r.Reason</td>
+                <td>@r.RequestedOn</td>
+                <td>@r.Status</td>
+            </tr>
+}
+}
+        </tbody>
+    </table>
+
+@if (!string.IsNullOrWhiteSpace(departmentFilter) || !string.IsNullOrWhiteSpace(employeeFilter))
+{
+    <div class="filters">
+        <div class="filters-title">Filters</div>
+@if (!string.IsNullOrWhiteSpace(departmentFilter))
+{
+        <div>Department: @departmentFilter</div>
+}
+@if (!string.IsNullOrWhiteSpace(employeeFilter))
+{
+        <div>Employee: @employeeFilter</div>
+}
+    </div>
+}
+
+    <div class="note">
+        Each row represents a day an employee logged worked hours on what Jibble recorded as a Rest Day or Public Holiday, derived from attendance data only.
+        Time Off Policy, Compensation, Requested On, and Status are fixed placeholder values &mdash; Jibble does not provide this app with a separate overtime/time-off-request record, so these are not sourced from real request data.
+    </div>
+</body>
+</html>

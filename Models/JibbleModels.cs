@@ -183,6 +183,7 @@ namespace HCMSys.Models
         public string Absence { get; set; } = string.Empty;        // e.g. "Shift off (8h)" or "Rest Day" or "Absent" or "-"
         public string StatusBadge { get; set; } = string.Empty;    // "Worked", "Rest Day", "Time Off", "Absent"
         public bool IsAbsenceOrTimeOff { get; set; }               // true if record represents Absence, Rest Day, or Time Off
+        public bool IsPublicHoliday { get; set; }                  // true if Jibble's timeOff.types for this day names a public holiday
     }
 
     public class JibbleWorkspacePersonModel
@@ -271,5 +272,73 @@ namespace HCMSys.Models
         /// </summary>
         public string EffectiveFromDate { get; set; } = string.Empty;
         public string EffectiveToDate { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// One row of the "Attendance Report" PDF format — a per-employee summary across the whole
+    /// requested date range (mirrors the MENA HR "Attendance Report" layout: one row per person,
+    /// counting how many days in the range fell into each status).
+    /// </summary>
+    public class AttendanceSummaryRowDto
+    {
+        public string FullName { get; set; } = string.Empty;
+        public string MemberCode { get; set; } = string.Empty;
+        public string Group { get; set; } = string.Empty;          // Department
+        public string Managers { get; set; } = string.Empty;
+        public int ExpectedDaysOfWork { get; set; }                // Total calendar days in the requested range
+        public int RegularDaysWork { get; set; }                   // Days with StatusBadge == "Worked"
+        public int Absentees { get; set; }                         // Days with StatusBadge == "Absent"
+        public int TimeOff { get; set; }                           // Days with StatusBadge == "Time Off"
+        public int RestDayWorked { get; set; }                     // Rest Day rows where hours were actually logged
+        public int PublicHolidayWorked { get; set; }               // Public Holiday rows where hours were actually logged
+    }
+
+    /// <summary>
+    /// One row of the "Overtime Roster" PDF format. Jibble does not expose an overtime/time-off-*request*
+    /// API to this app (only attendance/timesheet data), so this is a best-effort derivation from the
+    /// attendance rows we do have: every day an employee logged hours on what should have been a Rest Day
+    /// or Public Holiday is treated as one overtime instance. TimeOffPolicy/Compensation/RequestedOn/Status
+    /// have no real source data and are fixed placeholders — the export clearly foot-notes this.
+    /// </summary>
+    public class OvertimeRosterRowDto
+    {
+        public string FullName { get; set; } = string.Empty;
+        public string Group { get; set; } = string.Empty;          // Department
+        public string TimeOffPolicy { get; set; } = "Overtime Public";  // Placeholder — not sourced from Jibble
+        public string Compensation { get; set; } = "Paid";              // Placeholder — not sourced from Jibble
+        public string StartDate { get; set; } = string.Empty;          // Display-formatted date of the worked rest day/holiday
+        public string StartTime { get; set; } = string.Empty;          // From FirstIn
+        public string EndTime { get; set; } = string.Empty;            // From LastOut
+        public string Duration { get; set; } = string.Empty;           // From WorkedHours
+        public string Reason { get; set; } = string.Empty;             // From Justification (Jibble's own time-off-type/note text)
+        public string RequestedOn { get; set; } = string.Empty;        // Placeholder — defaults to StartDate, not a real request timestamp
+        public string Status { get; set; } = "Approved";                // Placeholder — not sourced from Jibble
+    }
+
+    /// <summary>
+    /// Page metadata shared by both PDF report views (date range display, active filter labels). Rotativa's
+    /// ViewAsPdf does not reliably carry ViewBag/ViewData through to the HTML it actually renders (verified:
+    /// it silently drops them even though the Model survives) — so this rides inside the Model itself instead
+    /// of being set via ViewBag from the controller, which is why AttendanceReportPdfViewModel/
+    /// OvertimeRosterPdfViewModel wrap it together with the rows rather than the controller setting ViewBag.
+    /// </summary>
+    public class JibblePdfReportMeta
+    {
+        public string FromDateDisplay { get; set; } = string.Empty;
+        public string ToDateDisplay { get; set; } = string.Empty;
+        public string? DepartmentFilter { get; set; }
+        public string? EmployeeFilter { get; set; }
+    }
+
+    public class AttendanceReportPdfViewModel
+    {
+        public JibblePdfReportMeta Meta { get; set; } = new JibblePdfReportMeta();
+        public List<AttendanceSummaryRowDto> Rows { get; set; } = new List<AttendanceSummaryRowDto>();
+    }
+
+    public class OvertimeRosterPdfViewModel
+    {
+        public JibblePdfReportMeta Meta { get; set; } = new JibblePdfReportMeta();
+        public List<OvertimeRosterRowDto> Rows { get; set; } = new List<OvertimeRosterRowDto>();
     }
 }

@@ -621,6 +621,12 @@ namespace HCMSys.Services
                     var timeOff = d.TimeOff;
                     bool hasWorked = workedDecimal > 0 || firstInDisplay != "-";
 
+                    // Jibble names public holidays as one of the timeOff.types entries (e.g. "Public Holiday",
+                    // seen verbatim in real data as "Hijri new year (Public Holiday)"). Computed independently
+                    // of the StatusBadge branching below so "worked on a public holiday" can still be detected
+                    // even on a day that also happens to be flagged as a rest day.
+                    bool isPublicHoliday = timeOff?.Types != null && timeOff.Types.Any(t => !string.IsNullOrWhiteSpace(t.Name) && t.Name.IndexOf("Holiday", StringComparison.OrdinalIgnoreCase) >= 0);
+
                     if (timeOff != null && timeOff.Types != null && timeOff.Types.Count > 0)
                     {
                         var typeNames = string.Join(", ", timeOff.Types.Select(t => t.Name).Where(n => !string.IsNullOrWhiteSpace(n)));
@@ -683,7 +689,8 @@ namespace HCMSys.Services
                         WorkedHoursDecimal = Math.Round(workedDecimal, 2),
                         Absence = absence,
                         StatusBadge = statusBadge,
-                        IsAbsenceOrTimeOff = statusBadge != "Worked" || (absence != "-" && !string.IsNullOrWhiteSpace(absence))
+                        IsAbsenceOrTimeOff = statusBadge != "Worked" || (absence != "-" && !string.IsNullOrWhiteSpace(absence)),
+                        IsPublicHoliday = isPublicHoliday
                     });
                 }
             }

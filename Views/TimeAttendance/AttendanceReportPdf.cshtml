@@ -1,0 +1,137 @@
+@model AttendanceReportPdfViewModel
+@{
+    // Metadata rides inside the Model (not ViewBag) — Rotativa's ViewAsPdf does not reliably carry
+    // ViewBag/ViewData through to the HTML it actually renders (verified: it silently drops them even
+    // though the Model survives), so everything this view needs must come through @Model itself.
+    Layout = null;
+    var rows = Model.Rows;
+    var fromDisplay = Model.Meta.FromDateDisplay;
+    var toDisplay = Model.Meta.ToDateDisplay;
+    var departmentFilter = Model.Meta.DepartmentFilter;
+    var employeeFilter = Model.Meta.EmployeeFilter;
+    int overallAbsentees = rows.Sum(r => r.Absentees);
+    int overallTimeOff = rows.Sum(r => r.TimeOff);
+    int overallRestDayWorked = rows.Sum(r => r.RestDayWorked);
+    int overallPublicHolidayWorked = rows.Sum(r => r.PublicHolidayWorked);
+}
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Attendance Report</title>
+<style>
+    /* wkhtmltopdf renders with an old WebKit build with unreliable flexbox/grid support, so this whole
+       page intentionally sticks to plain block/table/float layout only — the one thing verified to render
+       correctly across the actual PDF engine, not just a regular browser preview. */
+    body { font-family: Arial, Helvetica, sans-serif; font-size: 8pt; color: #333; margin: 22px; }
+    .header { margin-bottom: 10px; overflow: hidden; }
+    .header .title { float: left; }
+    .header .brand { float: right; }
+    .title, .brand { font-size: 19pt; font-weight: bold; color: #E07B24; margin: 0; }
+    table.meta { border-collapse: collapse; margin-bottom: 14px; font-size: 8pt; clear: both; }
+    table.meta td { padding: 1px 14px 1px 0; }
+    table.meta td.label { font-weight: bold; }
+    /* table-layout:fixed + explicit <col> widths are essential here: without them, wkhtmltopdf's table
+       auto-sizing gives the long comma-joined Manager(s) text enough width to avoid wrapping at all,
+       which blows the table (and the whole page) out to many times the Letter page width. wkhtmltopdf then
+       "smart shrinks" the entire rendered page down to fit that width, which also shrinks it vertically —
+       the visible symptom was a huge blank top margin and the whole 150+ row table crammed illegibly small
+       onto a single page. Fixed widths force long cells to wrap instead, so the page prints at real size
+       and paginates normally across as many physical pages as the content needs. */
+    table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    table.grid th, table.grid td { word-wrap: break-word; overflow-wrap: break-word; }
+    table.grid thead th {
+        background: #ffffff; border-bottom: 2px solid #333; text-align: left;
+        font-size: 6.8pt; text-transform: uppercase; padding: 3px 4px; vertical-align: bottom;
+    }
+    table.grid tbody td { border-bottom: 1px solid #eee; padding: 2px 4px; font-size: 7.6pt; }
+    table.grid tbody tr:nth-child(even) { background: #fafafa; }
+    .num { text-align: center; color: #c0392b; font-weight: 600; }
+    .total-row td { font-weight: bold; border-top: 2px solid #333; border-bottom: none; }
+    .filters { margin-top: 16px; font-size: 7.6pt; }
+    .filters .filters-title { font-weight: bold; color: #E07B24; }
+    .note { margin-top: 8px; font-size: 7pt; color: #777; font-style: italic; }
+</style>
+</head>
+<body>
+    <div class="header">
+        <div class="title">Attendance Report</div>
+        <div class="brand">MENA HR</div>
+    </div>
+
+    <table class="meta">
+        <tr><td class="label">Date Range</td><td>@fromDisplay - @toDisplay</td></tr>
+        <tr><td class="label"># Members</td><td>@rows.Count</td></tr>
+    </table>
+
+    <table class="grid">
+        <colgroup>
+            <col style="width:15%" />
+            <col style="width:8%" />
+            <col style="width:13%" />
+            <col style="width:22%" />
+            <col style="width:8.4%" />
+            <col style="width:8.4%" />
+            <col style="width:6.4%" />
+            <col style="width:6.4%" />
+            <col style="width:6.4%" />
+            <col style="width:6%" />
+        </colgroup>
+        <thead>
+            <tr>
+                <th>Full Name</th>
+                <th>Member Code</th>
+                <th>Group</th>
+                <th>Manager(s)</th>
+                <th>Expected Days<br />of Work</th>
+                <th>Regular Days<br />Work</th>
+                <th>Absentees</th>
+                <th>Time Off</th>
+                <th>Rest Day<br />Worked</th>
+                <th>Public Holiday<br />Worked</th>
+            </tr>
+        </thead>
+        <tbody>
+@foreach (var r in rows)
+{
+            <tr>
+                <td>@r.FullName</td>
+                <td>@r.MemberCode</td>
+                <td>@r.Group</td>
+                <td>@r.Managers</td>
+                <td class="num">@r.ExpectedDaysOfWork</td>
+                <td class="num">@r.RegularDaysWork</td>
+                <td class="num">@r.Absentees</td>
+                <td class="num">@r.TimeOff</td>
+                <td class="num">@r.RestDayWorked</td>
+                <td class="num">@r.PublicHolidayWorked</td>
+            </tr>
+}
+            <tr class="total-row">
+                <td colspan="6" style="text-align:right;">Overall Total</td>
+                <td class="num">@overallAbsentees</td>
+                <td class="num">@overallTimeOff</td>
+                <td class="num">@overallRestDayWorked</td>
+                <td class="num">@overallPublicHolidayWorked</td>
+            </tr>
+        </tbody>
+    </table>
+
+@if (!string.IsNullOrWhiteSpace(departmentFilter) || !string.IsNullOrWhiteSpace(employeeFilter))
+{
+    <div class="filters">
+        <div class="filters-title">Filters</div>
+@if (!string.IsNullOrWhiteSpace(departmentFilter))
+{
+        <div>Department: @departmentFilter</div>
+}
+@if (!string.IsNullOrWhiteSpace(employeeFilter))
+{
+        <div>Employee: @employeeFilter</div>
+}
+    </div>
+}
+
+    <div class="note">Generated by HCMSys from Jibble attendance data. Expected Days of Work is the total number of calendar days in the selected range.</div>
+</body>
+</html>

@@ -220,6 +220,13 @@
                     <button type="button" class="btn btn-success btn-sm shadow-sm" id="btn-export-excel" onclick="exportExcel()">
                         <i class="fas fa-file-excel fa-sm text-white-50 mr-1"></i> Export to Excel (.xlsx)
                     </button>
+                    <select class="form-control form-control-sm" id="pdf-export-format" style="width:auto; display:inline-block;" title="PDF report format">
+                        <option value="attendance">Attendance Report</option>
+                        <option value="overtime">Overtime Roster</option>
+                    </select>
+                    <button type="button" class="btn btn-danger btn-sm shadow-sm" id="btn-export-pdf" onclick="exportPdf()">
+                        <i class="fas fa-file-pdf fa-sm text-white-50 mr-1"></i> Export as PDF
+                    </button>
                 </div>
             </div>
         </div>
@@ -789,5 +796,30 @@
         });
 
         window.location.href = '@Url.Action("ExportTimesheetExcel", "TimeAttendance")' + '?' + params.toString();
+    }
+
+    var attendanceReportPdfUrl = '@Url.Action("ExportAttendanceReportPdf", "TimeAttendance")';
+    var overtimeRosterPdfUrl = '@Url.Action("ExportOvertimeRosterPdf", "TimeAttendance")';
+
+    function exportPdf() {
+        var format = $('#pdf-export-format').val();
+        var fromDate = $('#filter-from-date').val() || defaultFromDate;
+        var toDate = $('#filter-to-date').val() || defaultToDate;
+        var employee = $('#filter-employee').val() || '';
+        var department = $('#filter-department').val() || '';
+        var status = $('#filter-status').val() || '';
+        var onlyAbsence = $('#filter-only-absence').is(':checked');
+
+        var params = new URLSearchParams({
+            fromDate: fromDate,
+            toDate: toDate,
+            employee: employee,
+            department: department,
+            status: status,
+            onlyAbsence: onlyAbsence
+        });
+
+        var baseUrl = format === 'overtime' ? overtimeRosterPdfUrl : attendanceReportPdfUrl;
+        window.location.href = baseUrl + '?' + params.toString();
     }
 </script>
