@@ -250,4 +250,16 @@ namespace HCMSys.Models
         [JsonPropertyName("note")]
         public string? Note { get; set; }
     }
+
+    /// <summary>
+    /// Wraps the flattened timesheet grid rows together with any non-fatal warnings
+    /// picked up while composing them (e.g. a sub-fetch such as Managers or Notes
+    /// failed/was truncated even though the main Timesheets data came back fine).
+    /// This lets the UI surface a warning instead of silently showing incomplete data.
+    /// </summary>
+    public class JibbleTimesheetFetchResult
+    {
+        public List<JibbleTimesheetGridRowDto> Rows { get; set; } = new List<JibbleTimesheetGridRowDto>();
+        public List<string> Warnings { get; set; } = new List<string>();
+    }
 }

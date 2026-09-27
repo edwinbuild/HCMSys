@@ -29,24 +29,25 @@ namespace HCMSys.Controllers
         public IActionResult Index()
         {
             ViewData["Title"] = "Timesheets";
-            ViewBag.DefaultDate = "2026-08-01";
-            ViewBag.DefaultPeriod = "Month";
+            ViewBag.DefaultFromDate = "2026-08-01";
+            ViewBag.DefaultToDate = "2026-08-31";
             return View();
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetTimesheetData(string date = "2026-08-01", string period = "Month", bool forceRefresh = false)
+        public async Task<IActionResult> GetTimesheetData(string fromDate = "2026-08-01", string toDate = "2026-08-31", bool forceRefresh = false)
         {
             try
             {
-                var rows = await _jibbleService.GetTimesheetGridRowsAsync(date, period, forceRefresh);
+                var result = await _jibbleService.GetTimesheetGridRowsAsync(fromDate, toDate, forceRefresh);
                 return Json(new
                 {
                     success = true,
-                    count = rows.Count,
-                    date = date,
-                    period = period,
-                    data = rows
+                    count = result.Rows.Count,
+                    fromDate = fromDate,
+                    toDate = toDate,
+                    data = result.Rows,
+                    warnings = result.Warnings
                 });
             }
             catch (Exception ex)
@@ -62,9 +63,10 @@ namespace HCMSys.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> ExportTimesheetCsv(string date = "2026-08-01", string period = "Month")
+        public async Task<IActionResult> ExportTimesheetCsv(string fromDate = "2026-08-01", string toDate = "2026-08-31")
         {
-            var rows = await _jibbleService.GetTimesheetGridRowsAsync(date, period, false);
+            var result = await _jibbleService.GetTimesheetGridRowsAsync(fromDate, toDate, false);
+            var rows = result.Rows;
             var sb = new StringBuilder();
 
             // 12 Exact Columns in user specified order:
@@ -90,7 +92,7 @@ namespace HCMSys.Controllers
             }
 
             var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
-            string fileName = $"Timesheets_{date}_{period}.csv";
+            string fileName = $"Timesheets_{fromDate}_to_{toDate}.csv";
             return File(bytes, "text/csv", fileName);
         }
 
@@ -101,13 +103,16 @@ namespace HCMSys.Controllers
             string employee = "",
             string department = "",
             string status = "",
-            bool onlyAbsence = false,
-            string date = "2026-08-01",
-            string period = "Month")
+            bool onlyAbsence = false)
         {
-            var rows = await _jibbleService.GetTimesheetGridRowsAsync(date, period, false);
+            string effectiveFromDate = !string.IsNullOrWhiteSpace(fromDate) ? fromDate : "2026-08-01";
+            string effectiveToDate = !string.IsNullOrWhiteSpace(toDate) ? toDate : "2026-08-31";
 
-            // Apply filters
+            var result = await _jibbleService.GetTimesheetGridRowsAsync(effectiveFromDate, effectiveToDate, false);
+            var rows = result.Rows;
+
+            // The service already fetches/trims to [effectiveFromDate, effectiveToDate], but the extra
+            // comparisons below are kept as a harmless defensive no-op in case the two ever diverge.
             if (!string.IsNullOrWhiteSpace(fromDate))
             {
                 rows = rows.Where(r => string.Compare(r.Date, fromDate, StringComparison.OrdinalIgnoreCase) >= 0).ToList();

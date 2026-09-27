@@ -197,12 +197,12 @@
                 <div>
                     <div class="page-title-text">
                         <i class="fas fa-calendar-check fa-sm"></i>
-                        Time & Attendance &mdash; Timesheets (Aug-26)
+                        Time & Attendance &mdash; Timesheets
                         <span class="source-api-badge shadow-sm ml-2">
                             <i class="fas fa-bolt fa-xs"></i> Jibble Live API
                         </span>
                     </div>
-                    <small class="text-muted">Real-time attendance, tracked hours, and absence synchronization for August 2026</small>
+                    <small class="text-muted">Real-time attendance, tracked hours, and absence synchronization for the selected date range</small>
                 </div>
                 <div class="btn-group-actions">
                     <a href="@Url.Action("Index", "Home")" class="btn btn-secondary btn-sm shadow-sm">
@@ -278,7 +278,7 @@
                         <div class="input-group-prepend">
                             <span class="input-group-text"><i class="fas fa-calendar-alt"></i></span>
                         </div>
-                        <input type="date" class="form-control form-control-sm" id="filter-from-date" value="2026-08-01" />
+                        <input type="date" class="form-control form-control-sm" id="filter-from-date" value="@(ViewBag.DefaultFromDate ?? "2026-08-01")" />
                     </div>
                 </div>
                 <div class="col-lg-2 col-md-3 col-sm-6 mb-2">
@@ -287,7 +287,7 @@
                         <div class="input-group-prepend">
                             <span class="input-group-text"><i class="fas fa-calendar-day"></i></span>
                         </div>
-                        <input type="date" class="form-control form-control-sm" id="filter-to-date" value="2026-08-31" />
+                        <input type="date" class="form-control form-control-sm" id="filter-to-date" value="@(ViewBag.DefaultToDate ?? "2026-08-31")" />
                     </div>
                 </div>
                 <div class="col-lg-3 col-md-3 col-sm-6 mb-2">
@@ -389,6 +389,8 @@
     var allRowsData = [];
     var loadTimerInterval = null;
     var loadSecondsElapsed = 0;
+    var defaultFromDate = '@(ViewBag.DefaultFromDate ?? "2026-08-01")';
+    var defaultToDate = '@(ViewBag.DefaultToDate ?? "2026-08-31")';
 
     $(document).ready(function() {
         initDataTable();
@@ -415,11 +417,11 @@
             $('#loading-timer').html('<i class="far fa-clock mr-1"></i> Elapsed: ' + loadSecondsElapsed + 's &bull; Direct Jibble live API query');
 
             if (loadSecondsElapsed === 2) {
-                $('#loading-status-text').html('<i class="fas fa-cloud-download-alt mr-1 text-primary"></i> Downloading monthly timesheets for 155 members (~6 MB OData payload)...');
+                $('#loading-status-text').html('<i class="fas fa-cloud-download-alt mr-1 text-primary"></i> Downloading timesheets for the selected date range...');
             } else if (loadSecondsElapsed === 8) {
                 $('#loading-status-text').html('<i class="fas fa-calculator mr-1 text-warning"></i> Aggregating attendance, time off, and tracked hours...');
             } else if (loadSecondsElapsed >= 14) {
-                $('#loading-status-text').html('<i class="fas fa-stream mr-1 text-success"></i> Finalizing streaming and parsing 4,800+ daily attendance records...');
+                $('#loading-status-text').html('<i class="fas fa-stream mr-1 text-success"></i> Finalizing and parsing daily attendance records...');
             }
         }, 1000);
     }
@@ -462,8 +464,8 @@
     }
 
     function loadTimesheetData(forceRefresh) {
-        var dateVal = $('#filter-from-date').val() || '2026-08-01';
-        var periodVal = 'Month';
+        var fromDateVal = $('#filter-from-date').val() || defaultFromDate;
+        var toDateVal = $('#filter-to-date').val() || defaultToDate;
 
         startLoadingUI();
 
@@ -471,8 +473,8 @@
             url: '@Url.Action("GetTimesheetData", "TimeAttendance")',
             type: 'GET',
             data: {
-                date: dateVal,
-                period: periodVal,
+                fromDate: fromDateVal,
+                toDate: toDateVal,
                 forceRefresh: forceRefresh === true
             },
             dataType: 'json',
@@ -486,6 +488,13 @@
 
                         if (typeof alertify !== 'undefined' && forceRefresh) {
                             alertify.log('Successfully refreshed ' + allRowsData.length.toLocaleString() + ' records from Jibble API.', 'success', 3500);
+                        }
+                        // Surface any non-fatal degradation (e.g. managers or notes couldn't be fully
+                        // fetched) even though the main grid did load, instead of failing silently.
+                        if (typeof alertify !== 'undefined' && Array.isArray(res.warnings)) {
+                            res.warnings.forEach(function(w) {
+                                alertify.log(w, 'warning', 6000);
+                            });
                         }
                     } else {
                         allRowsData = [];
@@ -517,17 +526,26 @@
         });
     }
 
+    // Member Code uniquely identifies an employee in Jibble; Full Name does not (two employees can share
+    // a name). Use Member Code as the filter/grouping key whenever it's available, only falling back to
+    // Full Name for the rare row where no code was resolved, so employees with duplicate names don't get
+    // merged into a single filter entry or matched against each other.
+    function getEmployeeKey(r) {
+        return (r.memberCode && r.memberCode !== '-') ? r.memberCode : r.fullName;
+    }
+
     function populateFilters(rows) {
         var deptSet = new Set();
-        var empMap = new Map();
+        var empMap = new Map(); // key -> { name, code }
 
         rows.forEach(function(r) {
             if (r.department && r.department !== '-') {
                 deptSet.add(r.department);
             }
             if (r.fullName && r.fullName !== 'Unknown' && r.fullName !== '-') {
-                if (!empMap.has(r.fullName)) {
-                    empMap.set(r.fullName, r.memberCode || '');
+                var key = getEmployeeKey(r);
+                if (!empMap.has(key)) {
+                    empMap.set(key, { name: r.fullName, code: r.memberCode || '' });
                 }
             }
         });
@@ -543,15 +561,17 @@
             deptSelect.val(currentDept);
         }
 
-        // Populate Employee dropdown
+        // Populate Employee dropdown (sorted by display name, valued by the unique key)
         var currentEmp = $('#filter-employee').val();
         var empSelect = $('#filter-employee');
         empSelect.empty().append('<option value="">All Employees</option>');
-        Array.from(empMap.keys()).sort().forEach(function(name) {
-            var code = empMap.get(name);
-            var label = code && code !== '-' ? `${name} (${code})` : name;
-            empSelect.append(`<option value="${name}">${label}</option>`);
-        });
+        Array.from(empMap.keys())
+            .sort(function(a, b) { return empMap.get(a).name.localeCompare(empMap.get(b).name); })
+            .forEach(function(key) {
+                var info = empMap.get(key);
+                var label = info.code && info.code !== '-' ? `${info.name} (${info.code})` : info.name;
+                empSelect.append(`<option value="${key}">${label}</option>`);
+            });
         if (currentEmp && empMap.has(currentEmp)) {
             empSelect.val(currentEmp);
         }
@@ -568,7 +588,7 @@
         var filtered = allRowsData.filter(function(r) {
             if (fromDate && r.date < fromDate) return false;
             if (toDate && r.date > toDate) return false;
-            if (selectedEmp && r.fullName !== selectedEmp && r.memberCode !== selectedEmp) return false;
+            if (selectedEmp && getEmployeeKey(r) !== selectedEmp) return false;
             if (selectedDept && r.department !== selectedDept) return false;
             if (selectedStatus && r.statusBadge !== selectedStatus) return false;
             if (onlyAbsence && !r.isAbsenceOrTimeOff) return false;
@@ -580,8 +600,8 @@
     }
 
     function resetFilters() {
-        $('#filter-from-date').val('2026-08-01');
-        $('#filter-to-date').val('2026-08-31');
+        $('#filter-from-date').val(defaultFromDate);
+        $('#filter-to-date').val(defaultToDate);
         $('#filter-employee').val('');
         $('#filter-department').val('');
         $('#filter-status').val('');
@@ -682,7 +702,7 @@
 
         rows.forEach(function(r) {
             if (r.fullName && r.fullName !== 'Unknown' && r.fullName !== '-') {
-                membersSet.add(r.fullName);
+                membersSet.add(getEmployeeKey(r));
             }
             if (r.isAbsenceOrTimeOff) {
                 absenceCount++;
@@ -695,8 +715,8 @@
     }
 
     function exportExcel() {
-        var fromDate = $('#filter-from-date').val() || '';
-        var toDate = $('#filter-to-date').val() || '';
+        var fromDate = $('#filter-from-date').val() || defaultFromDate;
+        var toDate = $('#filter-to-date').val() || defaultToDate;
         var employee = $('#filter-employee').val() || '';
         var department = $('#filter-department').val() || '';
         var status = $('#filter-status').val() || '';
@@ -708,9 +728,7 @@
             employee: employee,
             department: department,
             status: status,
-            onlyAbsence: onlyAbsence,
-            date: '2026-08-01',
-            period: 'Month'
+            onlyAbsence: onlyAbsence
         });
 
         window.location.href = '@Url.Action("ExportTimesheetExcel", "TimeAttendance")' + '?' + params.toString();
