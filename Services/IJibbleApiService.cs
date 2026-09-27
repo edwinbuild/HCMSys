@@ -15,6 +15,8 @@ namespace HCMSys.Services
         /// months. Any sub-fetch that failed or degraded is reported back via Warnings rather than silently
         /// producing incomplete data.
         /// </summary>
-        Task<JibbleTimesheetFetchResult> GetTimesheetGridRowsAsync(string fromDate = "2026-08-01", string toDate = "2026-08-31", bool forceRefresh = false);
+        /// <param name="fromDate">Start date (yyyy-MM-dd). Omit/null/invalid to default to the 1st of the current calendar month.</param>
+        /// <param name="toDate">End date (yyyy-MM-dd). Omit/null/invalid to default to the last day of the current calendar month.</param>
+        Task<JibbleTimesheetFetchResult> GetTimesheetGridRowsAsync(string? fromDate = null, string? toDate = null, bool forceRefresh = false);
     }
 }

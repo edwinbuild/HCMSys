@@ -261,5 +261,15 @@ namespace HCMSys.Models
     {
         public List<JibbleTimesheetGridRowDto> Rows { get; set; } = new List<JibbleTimesheetGridRowDto>();
         public List<string> Warnings { get; set; } = new List<string>();
+
+        /// <summary>
+        /// The actual [fromDate, toDate] window used for this fetch, in yyyy-MM-dd format. Echoes back
+        /// whatever the caller passed in, or the resolved current-calendar-month default when either was
+        /// omitted/invalid — callers (JSON response, CSV/Excel export filenames and subtitles) should read
+        /// these back rather than re-deriving "today" themselves, so there's exactly one place that decides
+        /// what "no date given" means.
+        /// </summary>
+        public string EffectiveFromDate { get; set; } = string.Empty;
+        public string EffectiveToDate { get; set; } = string.Empty;
     }
 }

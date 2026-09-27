@@ -104,12 +104,18 @@ namespace HCMSys.Services
             return null;
         }
 
-        public async Task<JibbleTimesheetFetchResult> GetTimesheetGridRowsAsync(string fromDate = "2026-08-01", string toDate = "2026-08-31", bool forceRefresh = false)
+        public async Task<JibbleTimesheetFetchResult> GetTimesheetGridRowsAsync(string? fromDate = null, string? toDate = null, bool forceRefresh = false)
         {
             var warnings = new List<string>();
 
-            if (!DateTime.TryParse(fromDate, out var fromDt)) fromDt = new DateTime(2026, 8, 1);
-            if (!DateTime.TryParse(toDate, out var toDt)) toDt = new DateTime(2026, 8, 31);
+            // No hardcoded reporting period: an omitted or unparsable date defaults to the current
+            // calendar month, resolved fresh against today's date every call.
+            var today = DateTime.Today;
+            var currentMonthStart = new DateTime(today.Year, today.Month, 1);
+            var currentMonthEnd = new DateTime(today.Year, today.Month, DateTime.DaysInMonth(today.Year, today.Month));
+
+            if (string.IsNullOrWhiteSpace(fromDate) || !DateTime.TryParse(fromDate, out var fromDt)) fromDt = currentMonthStart;
+            if (string.IsNullOrWhiteSpace(toDate) || !DateTime.TryParse(toDate, out var toDt)) toDt = currentMonthEnd;
             if (toDt < fromDt)
             {
                 // Defensive swap: never let a reversed range silently return nothing.
@@ -130,7 +136,7 @@ namespace HCMSys.Services
             {
                 _logger.LogError("Unable to fetch Jibble timesheets: No token available.");
                 warnings.Add("Unable to authenticate with the Jibble API. No timesheet data could be retrieved.");
-                return new JibbleTimesheetFetchResult { Rows = new List<JibbleTimesheetGridRowDto>(), Warnings = warnings };
+                return new JibbleTimesheetFetchResult { Rows = new List<JibbleTimesheetGridRowDto>(), Warnings = warnings, EffectiveFromDate = normFrom, EffectiveToDate = normTo };
             }
 
             try
@@ -177,7 +183,7 @@ namespace HCMSys.Services
                 rows = rows.Where(r => DateTime.TryParse(r.Date, out var d) && d.Date >= fromDt.Date && d.Date <= toDt.Date)
                            .OrderBy(r => r.Date).ThenBy(r => r.FullName).ToList();
 
-                var result = new JibbleTimesheetFetchResult { Rows = rows, Warnings = warnings };
+                var result = new JibbleTimesheetFetchResult { Rows = rows, Warnings = warnings, EffectiveFromDate = normFrom, EffectiveToDate = normTo };
 
                 // Cache for 60 minutes (user can click 'Refresh API' to bypass cache anytime)
                 _cache.Set(cacheKey, result, TimeSpan.FromMinutes(60));
@@ -189,7 +195,7 @@ namespace HCMSys.Services
                 warnings.Add("An unexpected error occurred while retrieving timesheet data from Jibble.");
             }
 
-            return new JibbleTimesheetFetchResult { Rows = new List<JibbleTimesheetGridRowDto>(), Warnings = warnings };
+            return new JibbleTimesheetFetchResult { Rows = new List<JibbleTimesheetGridRowDto>(), Warnings = warnings, EffectiveFromDate = normFrom, EffectiveToDate = normTo };
         }
 
         /// <summary>

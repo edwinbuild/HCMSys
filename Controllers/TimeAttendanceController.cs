@@ -25,17 +25,30 @@ namespace HCMSys.Controllers
             _logger = logger;
         }
 
+        /// <summary>The 1st and last day of the current calendar month, computed fresh on every call —
+        /// used only to pre-fill the date pickers before any fetch happens. The actual fetch-time default
+        /// (when a request omits fromDate/toDate) is resolved independently, in the same way, by
+        /// JibbleApiService itself — this is not the single source of truth for that, just the initial UI state.</summary>
+        private static (string From, string To) CurrentMonthDefaults()
+        {
+            var today = DateTime.Today;
+            var start = new DateTime(today.Year, today.Month, 1);
+            var end = new DateTime(today.Year, today.Month, DateTime.DaysInMonth(today.Year, today.Month));
+            return (start.ToString("yyyy-MM-dd"), end.ToString("yyyy-MM-dd"));
+        }
+
         [HttpGet]
         public IActionResult Index()
         {
             ViewData["Title"] = "Timesheets";
-            ViewBag.DefaultFromDate = "2026-08-01";
-            ViewBag.DefaultToDate = "2026-08-31";
+            var (from, to) = CurrentMonthDefaults();
+            ViewBag.DefaultFromDate = from;
+            ViewBag.DefaultToDate = to;
             return View();
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetTimesheetData(string fromDate = "2026-08-01", string toDate = "2026-08-31", bool forceRefresh = false)
+        public async Task<IActionResult> GetTimesheetData(string? fromDate = null, string? toDate = null, bool forceRefresh = false)
         {
             try
             {
@@ -44,8 +57,8 @@ namespace HCMSys.Controllers
                 {
                     success = true,
                     count = result.Rows.Count,
-                    fromDate = fromDate,
-                    toDate = toDate,
+                    fromDate = result.EffectiveFromDate,
+                    toDate = result.EffectiveToDate,
                     data = result.Rows,
                     warnings = result.Warnings
                 });
@@ -63,7 +76,7 @@ namespace HCMSys.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> ExportTimesheetCsv(string fromDate = "2026-08-01", string toDate = "2026-08-31")
+        public async Task<IActionResult> ExportTimesheetCsv(string? fromDate = null, string? toDate = null)
         {
             var result = await _jibbleService.GetTimesheetGridRowsAsync(fromDate, toDate, false);
             var rows = result.Rows;
@@ -92,35 +105,28 @@ namespace HCMSys.Controllers
             }
 
             var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
-            string fileName = $"Timesheets_{fromDate}_to_{toDate}.csv";
+            string fileName = $"Timesheets_{result.EffectiveFromDate}_to_{result.EffectiveToDate}.csv";
             return File(bytes, "text/csv", fileName);
         }
 
         [HttpGet]
         public async Task<IActionResult> ExportTimesheetExcel(
-            string fromDate = "",
-            string toDate = "",
+            string? fromDate = null,
+            string? toDate = null,
             string employee = "",
             string department = "",
             string status = "",
             bool onlyAbsence = false)
         {
-            string effectiveFromDate = !string.IsNullOrWhiteSpace(fromDate) ? fromDate : "2026-08-01";
-            string effectiveToDate = !string.IsNullOrWhiteSpace(toDate) ? toDate : "2026-08-31";
-
-            var result = await _jibbleService.GetTimesheetGridRowsAsync(effectiveFromDate, effectiveToDate, false);
+            var result = await _jibbleService.GetTimesheetGridRowsAsync(fromDate, toDate, false);
             var rows = result.Rows;
+            string effectiveFromDate = result.EffectiveFromDate;
+            string effectiveToDate = result.EffectiveToDate;
 
             // The service already fetches/trims to [effectiveFromDate, effectiveToDate], but the extra
             // comparisons below are kept as a harmless defensive no-op in case the two ever diverge.
-            if (!string.IsNullOrWhiteSpace(fromDate))
-            {
-                rows = rows.Where(r => string.Compare(r.Date, fromDate, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
-            }
-            if (!string.IsNullOrWhiteSpace(toDate))
-            {
-                rows = rows.Where(r => string.Compare(r.Date, toDate, StringComparison.OrdinalIgnoreCase) <= 0).ToList();
-            }
+            rows = rows.Where(r => string.Compare(r.Date, effectiveFromDate, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+            rows = rows.Where(r => string.Compare(r.Date, effectiveToDate, StringComparison.OrdinalIgnoreCase) <= 0).ToList();
             if (!string.IsNullOrWhiteSpace(employee))
             {
                 rows = rows.Where(r => r.FullName.Equals(employee, StringComparison.OrdinalIgnoreCase) || r.MemberCode.Equals(employee, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -170,9 +176,7 @@ namespace HCMSys.Controllers
             ws.Cell("C2").Style.Font.FontColor = XLColor.FromHtml("#4E73DF");
 
             // Row 4: Given Date Range & Filter Metadata
-            string effectiveFrom = !string.IsNullOrWhiteSpace(fromDate) ? fromDate : "01-Aug-2026";
-            string effectiveTo = !string.IsNullOrWhiteSpace(toDate) ? toDate : "31-Aug-2026";
-            string dateRangeSubtitle = $"Date Range: {effectiveFrom} to {effectiveTo}";
+            string dateRangeSubtitle = $"Date Range: {FormatDisplayDate(effectiveFromDate)} to {FormatDisplayDate(effectiveToDate)}";
             if (!string.IsNullOrWhiteSpace(employee)) dateRangeSubtitle += $"  |  Employee: {employee}";
             if (!string.IsNullOrWhiteSpace(department)) dateRangeSubtitle += $"  |  Department: {department}";
             if (onlyAbsence) dateRangeSubtitle += "  |  Filter: Absences & Time Off Only";
@@ -286,8 +290,13 @@ namespace HCMSys.Controllers
             using var stream = new MemoryStream();
             workbook.SaveAs(stream);
             var fileBytes = stream.ToArray();
-            string fileName = $"Timesheet_Report_{(string.IsNullOrWhiteSpace(fromDate) ? "Aug-26" : fromDate + "_to_" + toDate)}.xlsx";
+            string fileName = $"Timesheet_Report_{effectiveFromDate}_to_{effectiveToDate}.xlsx";
             return File(fileBytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
+        }
+
+        private static string FormatDisplayDate(string yyyyMMdd)
+        {
+            return DateTime.TryParse(yyyyMMdd, out var dt) ? dt.ToString("dd-MMM-yyyy") : yyyyMMdd;
         }
 
         private string EscapeCsv(string? val)
