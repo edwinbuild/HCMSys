@@ -50,12 +50,6 @@ else
 
 app.UseHttpsRedirection();
 app.UseStaticFiles();
-// Rotativa.AspNetCore requires Setup() to have run before any PDF export (it reads a static
-// RotativaConfiguration.RotativaPath internally even though we also set an explicit WkhtmlPath per export
-// in TimeAttendanceController) — wwwroot/Rotativa only needs to exist, it's never actually read from,
-// since every export overrides the real binary location itself (defaulting to /usr/bin/wkhtmltopdf, where
-// the Dockerfile installs it).
-Rotativa.AspNetCore.RotativaConfiguration.Setup(app.Environment.WebRootPath, "Rotativa");
 app.UseSession();
 app.UseRouting();
 app.UseAuthentication(); // Important: Authentication before Authorization

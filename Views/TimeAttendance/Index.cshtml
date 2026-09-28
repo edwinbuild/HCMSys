@@ -224,12 +224,8 @@
                         <option value="attendance">Attendance Report</option>
                         <option value="overtime">Overtime Roster</option>
                     </select>
-                    <select class="form-control form-control-sm" id="report-export-filetype" style="width:auto; display:inline-block;" title="File type">
-                        <option value="pdf">PDF</option>
-                        <option value="csv">CSV</option>
-                    </select>
                     <button type="button" class="btn btn-danger btn-sm shadow-sm" id="btn-export-report" onclick="exportReport()">
-                        <i class="fas fa-download fa-sm text-white-50 mr-1"></i> Export Report
+                        <i class="fas fa-file-csv fa-sm text-white-50 mr-1"></i> Export Report (.csv)
                     </button>
                 </div>
             </div>
@@ -802,23 +798,15 @@
         window.location.href = '@Url.Action("ExportTimesheetExcel", "TimeAttendance")' + '?' + params.toString();
     }
 
-    // Report format x file type -> export endpoint. CSV needs no server-side wkhtmltopdf dependency, so it
-    // works in any environment (including a bare local `dotnet run` outside Docker); PDF requires the
-    // wkhtmltopdf binary the Dockerfile installs and will return a clear error if it's missing.
+    // Report format -> CSV export endpoint. No server-side PDF/wkhtmltopdf dependency at all — works the
+    // same in any environment, including a bare local `dotnet run` outside Docker.
     var reportExportUrls = {
-        attendance: {
-            pdf: '@Url.Action("ExportAttendanceReportPdf", "TimeAttendance")',
-            csv: '@Url.Action("ExportAttendanceReportCsv", "TimeAttendance")'
-        },
-        overtime: {
-            pdf: '@Url.Action("ExportOvertimeRosterPdf", "TimeAttendance")',
-            csv: '@Url.Action("ExportOvertimeRosterCsv", "TimeAttendance")'
-        }
+        attendance: '@Url.Action("ExportAttendanceReportCsv", "TimeAttendance")',
+        overtime: '@Url.Action("ExportOvertimeRosterCsv", "TimeAttendance")'
     };
 
     function exportReport() {
         var report = $('#report-export-format').val();
-        var fileType = $('#report-export-filetype').val();
         var fromDate = $('#filter-from-date').val() || defaultFromDate;
         var toDate = $('#filter-to-date').val() || defaultToDate;
         var employee = $('#filter-employee').val() || '';
@@ -835,7 +823,7 @@
             onlyAbsence: onlyAbsence
         });
 
-        var baseUrl = reportExportUrls[report][fileType];
+        var baseUrl = reportExportUrls[report];
         window.location.href = baseUrl + '?' + params.toString();
     }
 </script>

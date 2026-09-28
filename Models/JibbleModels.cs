@@ -184,6 +184,9 @@ namespace HCMSys.Models
         public string StatusBadge { get; set; } = string.Empty;    // "Worked", "Rest Day", "Time Off", "Absent"
         public bool IsAbsenceOrTimeOff { get; set; }               // true if record represents Absence, Rest Day, or Time Off
         public bool IsPublicHoliday { get; set; }                  // true if Jibble's timeOff.types for this day names a public holiday
+        public bool IsOvertimeType { get; set; }                   // true if Jibble's timeOff.types for this day names an overtime type (e.g. "Overtime Public")
+        public string TimeOffTypeName { get; set; } = string.Empty;      // Clean joined type name(s), e.g. "Overtime Public" — captured before employee notes get appended into Justification, so it stays a reliable machine-readable label
+        public string TimeOffRecordedDuration { get; set; } = string.Empty; // Jibble's own approved/paid duration for the time-off type (e.g. "8h") — separate from WorkedHours (the raw clock in/out delta), since for an explicit overtime type this is the figure that actually matters
     }
 
     public class JibbleWorkspacePersonModel
@@ -313,32 +316,5 @@ namespace HCMSys.Models
         public string Reason { get; set; } = string.Empty;             // From Justification (Jibble's own time-off-type/note text)
         public string RequestedOn { get; set; } = string.Empty;        // Placeholder — defaults to StartDate, not a real request timestamp
         public string Status { get; set; } = "Approved";                // Placeholder — not sourced from Jibble
-    }
-
-    /// <summary>
-    /// Page metadata shared by both PDF report views (date range display, active filter labels). Rotativa's
-    /// ViewAsPdf does not reliably carry ViewBag/ViewData through to the HTML it actually renders (verified:
-    /// it silently drops them even though the Model survives) — so this rides inside the Model itself instead
-    /// of being set via ViewBag from the controller, which is why AttendanceReportPdfViewModel/
-    /// OvertimeRosterPdfViewModel wrap it together with the rows rather than the controller setting ViewBag.
-    /// </summary>
-    public class JibblePdfReportMeta
-    {
-        public string FromDateDisplay { get; set; } = string.Empty;
-        public string ToDateDisplay { get; set; } = string.Empty;
-        public string? DepartmentFilter { get; set; }
-        public string? EmployeeFilter { get; set; }
-    }
-
-    public class AttendanceReportPdfViewModel
-    {
-        public JibblePdfReportMeta Meta { get; set; } = new JibblePdfReportMeta();
-        public List<AttendanceSummaryRowDto> Rows { get; set; } = new List<AttendanceSummaryRowDto>();
-    }
-
-    public class OvertimeRosterPdfViewModel
-    {
-        public JibblePdfReportMeta Meta { get; set; } = new JibblePdfReportMeta();
-        public List<OvertimeRosterRowDto> Rows { get; set; } = new List<OvertimeRosterRowDto>();
     }
 }

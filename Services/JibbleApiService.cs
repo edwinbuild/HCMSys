@@ -627,20 +627,38 @@ namespace HCMSys.Services
                     // even on a day that also happens to be flagged as a rest day.
                     bool isPublicHoliday = timeOff?.Types != null && timeOff.Types.Any(t => !string.IsNullOrWhiteSpace(t.Name) && t.Name.IndexOf("Holiday", StringComparison.OrdinalIgnoreCase) >= 0);
 
+                    // Jibble also names explicit overtime types this way (e.g. "Overtime Public") — a day
+                    // tagged like this sets StatusBadge to "Time Off" below (it's not a Rest Day and it's
+                    // not a public holiday), so without this flag the Overtime Roster filter would miss it
+                    // entirely even though it's the most authoritative overtime signal Jibble gives us.
+                    bool isOvertimeType = timeOff?.Types != null && timeOff.Types.Any(t => !string.IsNullOrWhiteSpace(t.Name) && t.Name.IndexOf("Overtime", StringComparison.OrdinalIgnoreCase) >= 0);
+                    string timeOffTypeName = string.Empty;
+                    string timeOffRecordedDuration = string.Empty;
+
                     if (timeOff != null && timeOff.Types != null && timeOff.Types.Count > 0)
                     {
                         var typeNames = string.Join(", ", timeOff.Types.Select(t => t.Name).Where(n => !string.IsNullOrWhiteSpace(n)));
                         justification = !string.IsNullOrWhiteSpace(typeNames) ? typeNames : "Time Off";
+                        timeOffTypeName = justification; // captured before employee notes get appended below
 
-                        var (timeOffHours, _) = ParseIsoDuration(timeOff.PaidTimeOff);
+                        var (timeOffHours, timeOffHoursDisplay) = ParseIsoDuration(timeOff.PaidTimeOff);
                         if (timeOffHours == 0)
                         {
-                            var (unpaidHours, _) = ParseIsoDuration(timeOff.UnpaidTimeOff);
+                            var (unpaidHours, unpaidHoursDisplay) = ParseIsoDuration(timeOff.UnpaidTimeOff);
                             timeOffHours = unpaidHours;
+                            timeOffHoursDisplay = unpaidHoursDisplay;
                         }
+                        if (timeOffHours > 0) timeOffRecordedDuration = timeOffHoursDisplay;
 
                         absence = timeOffHours > 0 ? $"{justification} ({timeOffHours:0.#}h)" : justification;
-                        statusBadge = "Time Off";
+
+                        // An explicit overtime type (e.g. "Overtime Public") on a day the person actually
+                        // worked represents paid overtime hours, not an absence — same root issue as the
+                        // Overtime Roster fix above. Classify it as Worked (still showing the overtime
+                        // annotation in Absence/Justification for visibility) instead of Time Off, so it
+                        // isn't miscounted as an absence in the Attendance Report or the "Total Absences"
+                        // stat card / "Absence & Time Off Only" filter on the main grid.
+                        statusBadge = (isOvertimeType && hasWorked) ? "Worked" : "Time Off";
                     }
                     else if (timeOff != null && timeOff.IsRestDay)
                     {
@@ -689,8 +707,16 @@ namespace HCMSys.Services
                         WorkedHoursDecimal = Math.Round(workedDecimal, 2),
                         Absence = absence,
                         StatusBadge = statusBadge,
-                        IsAbsenceOrTimeOff = statusBadge != "Worked" || (absence != "-" && !string.IsNullOrWhiteSpace(absence)),
-                        IsPublicHoliday = isPublicHoliday
+                        // Driven purely by StatusBadge now — the old extra "or Absence text is non-blank"
+                        // clause was redundant for every other status (Time Off/Rest Day/Absent already all
+                        // have StatusBadge != "Worked"), but it actively caused the overtime-miscount bug
+                        // above: a Worked day can now carry a non-blank Absence annotation (e.g. "Overtime
+                        // Public (8h)") for visibility without that alone making it count as an absence.
+                        IsAbsenceOrTimeOff = statusBadge != "Worked",
+                        IsPublicHoliday = isPublicHoliday,
+                        IsOvertimeType = isOvertimeType,
+                        TimeOffTypeName = timeOffTypeName,
+                        TimeOffRecordedDuration = timeOffRecordedDuration
                     });
                 }
             }

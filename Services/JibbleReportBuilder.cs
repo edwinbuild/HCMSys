@@ -57,16 +57,20 @@ namespace HCMSys.Services
         }
 
         /// <summary>
-        /// Derives "overtime instances" from the attendance rows: every day someone logged hours on what
-        /// should have been a Rest Day or Public Holiday. Jibble does not expose a real overtime/time-off
-        /// *request* API to this app (no policy, compensation, requested-on timestamp, or approval status
-        /// data exists anywhere in what we fetch), so TimeOffPolicy/Compensation/RequestedOn/Status are
-        /// fixed placeholders on the DTO — callers must make that clear to whoever reads the export.
+        /// Derives "overtime instances" from the attendance rows. Two sources feed this, in priority order:
+        /// (1) days Jibble itself explicitly tagged with an overtime time-off type (e.g. "Overtime Public")
+        /// — this is real, authoritative Jibble data, not a guess, and gets its real TimeOffPolicy/Duration
+        /// from Jibble rather than a placeholder; (2) days someone logged hours on what should have been a
+        /// Rest Day or Public Holiday with no explicit overtime type recorded — a heuristic fallback for
+        /// cases Jibble didn't formally tag. Jibble does not expose a real overtime/time-off *request* API
+        /// to this app (no compensation, requested-on timestamp, or approval-status data exists anywhere in
+        /// what we fetch), so those three fields remain fixed placeholders on every row regardless of source
+        /// — callers must make that clear to whoever reads the export.
         /// </summary>
         public static List<OvertimeRosterRowDto> BuildOvertimeRoster(List<JibbleTimesheetGridRowDto> rows)
         {
             return rows
-                .Where(r => r.WorkedHoursDecimal > 0 && (r.StatusBadge == "Rest Day" || r.IsPublicHoliday))
+                .Where(r => r.WorkedHoursDecimal > 0 && (r.IsOvertimeType || r.StatusBadge == "Rest Day" || r.IsPublicHoliday))
                 // Sort by the raw yyyy-MM-dd date (correct chronological order), then project to the
                 // display-formatted DTO — sorting on FormattedDate ("dd-MMM-yy") would sort alphabetically
                 // by day-of-month first and scramble the order.
@@ -76,10 +80,16 @@ namespace HCMSys.Services
                 {
                     FullName = r.FullName,
                     Group = r.Department,
+                    // When Jibble explicitly named the time-off type (e.g. "Overtime Public"), use that real
+                    // value instead of the generic placeholder — it's genuine Jibble data, not a guess.
+                    TimeOffPolicy = r.IsOvertimeType && !string.IsNullOrWhiteSpace(r.TimeOffTypeName) ? r.TimeOffTypeName : "Overtime Public",
                     StartDate = r.FormattedDate,
                     StartTime = r.FirstIn,
                     EndTime = r.LastOut,
-                    Duration = r.WorkedHours,
+                    // Prefer Jibble's own recorded/approved duration for the time-off type (e.g. "8h") over
+                    // the raw clock in/out delta — for an explicitly-tagged overtime day that's the figure
+                    // that actually matters, and it can legitimately differ from hours worked.
+                    Duration = r.IsOvertimeType && !string.IsNullOrWhiteSpace(r.TimeOffRecordedDuration) ? r.TimeOffRecordedDuration : r.WorkedHours,
                     Reason = (r.Justification == "-" || string.IsNullOrWhiteSpace(r.Justification))
                         ? (r.IsPublicHoliday ? "Public Holiday" : "Rest Day")
                         : r.Justification,

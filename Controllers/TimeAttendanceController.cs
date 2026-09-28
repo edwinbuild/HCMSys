@@ -10,8 +10,6 @@ using HCMSys.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
-using Rotativa.AspNetCore;
-using Rotativa.AspNetCore.Options;
 
 namespace HCMSys.Controllers
 {
@@ -274,82 +272,9 @@ namespace HCMSys.Controllers
         }
 
         /// <summary>
-        /// "Attendance Report" PDF — per-employee summary (Expected/Regular/Absentees/Time Off/Rest Day
+        /// "Attendance Report" CSV — per-employee summary (Expected/Regular/Absentees/Time Off/Rest Day
         /// Worked/Public Holiday Worked) across the requested range, matching the MENA HR reference layout.
         /// Built entirely from the same day-level rows the grid/Excel export use — no separate API call.
-        /// </summary>
-        [HttpGet]
-        public async Task<IActionResult> ExportAttendanceReportPdf(
-            string? fromDate = null,
-            string? toDate = null,
-            string employee = "",
-            string department = "",
-            string status = "",
-            bool onlyAbsence = false)
-        {
-            var result = await _jibbleService.GetTimesheetGridRowsAsync(fromDate, toDate, false);
-            string effectiveFromDate = result.EffectiveFromDate;
-            string effectiveToDate = result.EffectiveToDate;
-            var rows = ApplyGridFilters(result.Rows, effectiveFromDate, effectiveToDate, employee, department, status, onlyAbsence);
-
-            var summary = JibbleReportBuilder.BuildAttendanceSummary(rows, effectiveFromDate, effectiveToDate);
-
-            var viewModel = new AttendanceReportPdfViewModel
-            {
-                Rows = summary,
-                Meta = new JibblePdfReportMeta
-                {
-                    FromDateDisplay = FormatDisplayDate(effectiveFromDate),
-                    ToDateDisplay = FormatDisplayDate(effectiveToDate),
-                    DepartmentFilter = department,
-                    EmployeeFilter = employee
-                }
-            };
-
-            return BuildPdfResult("AttendanceReportPdf", viewModel, $"Attendance_Report_{effectiveFromDate}_to_{effectiveToDate}.pdf");
-        }
-
-        /// <summary>
-        /// "Overtime Roster" PDF. Jibble does not expose an overtime/time-off-*request* API to this app —
-        /// see JibbleReportBuilder.BuildOvertimeRoster for exactly what is and isn't real Jibble data here.
-        /// The reference sample's fixed management sign-off block is intentionally omitted (per product
-        /// decision) since it isn't attendance data and would need to be kept in sync by hand otherwise.
-        /// </summary>
-        [HttpGet]
-        public async Task<IActionResult> ExportOvertimeRosterPdf(
-            string? fromDate = null,
-            string? toDate = null,
-            string employee = "",
-            string department = "",
-            string status = "",
-            bool onlyAbsence = false)
-        {
-            var result = await _jibbleService.GetTimesheetGridRowsAsync(fromDate, toDate, false);
-            string effectiveFromDate = result.EffectiveFromDate;
-            string effectiveToDate = result.EffectiveToDate;
-            var rows = ApplyGridFilters(result.Rows, effectiveFromDate, effectiveToDate, employee, department, status, onlyAbsence);
-
-            var roster = JibbleReportBuilder.BuildOvertimeRoster(rows);
-
-            var viewModel = new OvertimeRosterPdfViewModel
-            {
-                Rows = roster,
-                Meta = new JibblePdfReportMeta
-                {
-                    FromDateDisplay = FormatDisplayDate(effectiveFromDate),
-                    ToDateDisplay = FormatDisplayDate(effectiveToDate),
-                    DepartmentFilter = department,
-                    EmployeeFilter = employee
-                }
-            };
-
-            return BuildPdfResult("OvertimeRosterPdf", viewModel, $"Overtime_Roster_{effectiveFromDate}_to_{effectiveToDate}.pdf");
-        }
-
-        /// <summary>
-        /// CSV equivalent of ExportAttendanceReportPdf — same rows, same filters, no wkhtmltopdf dependency.
-        /// Useful for local development (PDF export requires a wkhtmltopdf binary the Dockerfile installs;
-        /// this doesn't need it) and for anyone who just wants the numbers in a spreadsheet-friendly format.
         /// </summary>
         [HttpGet]
         public async Task<IActionResult> ExportAttendanceReportCsv(
@@ -390,8 +315,9 @@ namespace HCMSys.Controllers
         }
 
         /// <summary>
-        /// CSV equivalent of ExportOvertimeRosterPdf — see JibbleReportBuilder.BuildOvertimeRoster for what
-        /// is and isn't real Jibble data here. No wkhtmltopdf dependency, unlike the PDF version.
+        /// "Overtime Roster" CSV — see JibbleReportBuilder.BuildOvertimeRoster for exactly what is and isn't
+        /// real Jibble data here (TimeOffPolicy/Compensation/RequestedOn/Status are placeholders where Jibble
+        /// itself didn't provide a real value).
         /// </summary>
         [HttpGet]
         public async Task<IActionResult> ExportOvertimeRosterCsv(
@@ -467,42 +393,6 @@ namespace HCMSys.Controllers
             }
 
             return filtered.OrderBy(r => r.Date).ThenBy(r => r.FullName).ToList();
-        }
-
-        private IActionResult BuildPdfResult(string viewName, object model, string fileName)
-        {
-            // Rotativa.AspNetCore 1.4.0's ViewAsPdf ignores the per-instance WkhtmlPath/WkhtmltopdfPath
-            // properties in practice (verified against the real binary) — it always resolves the
-            // wkhtmltopdf executable from the global RotativaConfiguration.Setup() call in Program.cs,
-            // which points at wwwroot/Rotativa/wkhtmltopdf. That's the one place the binary needs to live.
-            //
-            // That binary is only ever placed there by the Dockerfile at image-build time (apt-installs
-            // the patched-Qt wkhtmltopdf, then symlinks it in) — a bare local checkout / `dotnet run`
-            // outside Docker won't have it. Check for it explicitly and fail with a clear, actionable
-            // message instead of letting Rotativa's Process.Start throw an unhandled Win32Exception.
-            string wkhtmltopdfPath = Path.Combine(_env.WebRootPath, "Rotativa", "wkhtmltopdf");
-            if (!System.IO.File.Exists(wkhtmltopdfPath))
-            {
-                _logger.LogError("PDF export requested but wkhtmltopdf is not installed at {Path}. It is installed automatically inside the Docker image; for local development outside Docker, install it manually or run the app via `docker build`/`podman build` + run instead.", wkhtmltopdfPath);
-                return StatusCode(503, new
-                {
-                    success = false,
-                    message = "PDF export isn't available in this environment: the wkhtmltopdf binary Rotativa needs isn't installed at " + wkhtmltopdfPath + ". It's installed automatically in the Docker image used for deployment. To test PDF export locally outside Docker, install wkhtmltopdf yourself and place/symlink it at that exact path, or run the app via Docker/podman instead — the Excel/CSV exports and the rest of the app work fine either way."
-                });
-            }
-
-            return new ViewAsPdf(viewName, model)
-            {
-                FileName = fileName,
-                PageSize = Size.Letter,
-                PageOrientation = Orientation.Portrait,
-                ContentDisposition = ContentDisposition.Attachment,
-                // wkhtmltopdf's "smart shrinking" tries to rescale the whole page if it thinks content
-                // doesn't fit the page width, but it can misfire on long multi-page tables and squash
-                // everything (including page count) down to one illegibly tiny page. Both report views are
-                // built with fixed table layouts precisely so they don't need this — disable it outright.
-                CustomSwitches = "--disable-smart-shrinking"
-            };
         }
 
         private static string FormatDisplayDate(string yyyyMMdd)
