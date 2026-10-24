@@ -71,7 +71,7 @@
                         <i class="fas fa-arrow-left fa-sm text-white-50 mr-1"></i> Back to List
                     </a>
                     <button type="button" class="btn btn-success btn-sm shadow-sm ml-2" onclick="saveRecord()">
-                        <i class="fas fa-save fa-sm text-white-50 mr-1"></i> Save
+                        <i class="fas fa-save fa-sm text-white-50 mr-1"></i> <span id="save-btn-label">Save</span>
                     </button>
                 </div>
             </div>
@@ -154,8 +154,17 @@
     var leaveTypesData = [];
     var categoriesData = [];
 
+    // Edit mode: ?idx=<array index into savedLeaveEligibility> means "edit this existing record" instead
+    // of creating a new one — navigated to directly from LeaveEligibilityIndex's Edit link (a plain page
+    // link now, no modal) exactly like CreateLeaveApplication's own ?id= pattern.
+    var urlParams = new URLSearchParams(window.location.search);
+    var editIdx = urlParams.has('idx') ? parseInt(urlParams.get('idx'), 10) : -1;
+    var isEditMode = !isNaN(editIdx) && editIdx >= 0;
+
     $(document).ready(function() {
-        initHeader();
+        if (!isEditMode) {
+            initHeader();
+        }
 
         $.when(
             $.getJSON('/Master/GetApiEmployees'),
@@ -168,9 +177,13 @@
             leaveTypesData = leaveData.leaveTypes || (Array.isArray(leaveData) ? leaveData : []);
             var catArr = (catRes && catRes[0]) ? catRes[0] : catRes;
             categoriesData = Array.isArray(catArr) ? (Array.isArray(catArr[0]) ? catArr[0] : catArr) : [];
-            
-            // Automatically add initial clean row
-            addRow();
+
+            if (isEditMode) {
+                loadRecordForEdit(editIdx);
+            } else {
+                // Automatically add initial clean row
+                addRow();
+            }
         }).fail(function() {
             alertify.log('Failed to load Leave Eligibility data.', 'error', 5000);
         });
@@ -180,6 +193,39 @@
             defaultDate: "today"
         });
     });
+
+    // Loads an existing record (by its index in savedLeaveEligibility) into the header + a single
+    // pre-filled grid row, switching the page into "update this record" mode. Mirrors the one-record-at-a-
+    // time granularity the old Edit modal had — "Add Row" is hidden in edit mode for the same reason.
+    function loadRecordForEdit(idx) {
+        var existingData = JSON.parse(localStorage.getItem('savedLeaveEligibility') || '[]');
+        var item = existingData[idx];
+
+        if (!item) {
+            alertify.log('That Leave Eligibility record could not be found.', 'error', 5000);
+            window.location.href = '@Url.Action("LeaveEligibilityIndex", "Master")';
+            return;
+        }
+
+        $('.page-title-text').html('<i class="fas fa-user-check fa-sm text-primary mr-2"></i> Edit Leave Eligibility');
+        $('#save-btn-label').text('Update');
+        $('#hdr-docno').val(item.docNo || '');
+        $('#hdr-date').val(item.date || '');
+        $('#hdr-comments').val(item.comments || '');
+        $('[onclick="addRow()"]').hide();
+
+        addRow();
+        var $row = $('#user-grid-table tbody tr').first();
+        $row.find('.remove-item-btn').hide();
+        $row.find('.grid-employee').val(item.employeeId || '').trigger('change');
+        $row.find('.grid-leavetype').val(item.leaveTypeId || '').trigger('change');
+        // Only categoryName (a display string "CODE - Name") was ever saved, not the raw code, so recover
+        // the code from it to re-select the dropdown.
+        var catCode = (item.categoryName || '').split(' - ')[0];
+        $row.find('.grid-category').val(catCode).trigger('change');
+        $row.find('.grid-duration').val(item.duration || '');
+        $row.find('.grid-remarks').val(item.remarks || '');
+    }
 
     function initHeader() {
         var d = new Date();
@@ -285,6 +331,7 @@
 
         var newRecords = [];
         var isValid = true;
+        var existingData = JSON.parse(localStorage.getItem('savedLeaveEligibility') || '[]');
 
         rows.each(function() {
             var empId = $(this).find('.grid-employee').val();
@@ -317,7 +364,10 @@
                 categoryName: categoryName,
                 duration: duration,
                 remarks: remarks,
-                status: 'Active'
+                // Preserve the record's existing status when editing (the create flow has no status
+                // control of its own — only the old Edit modal did — so defaulting to 'Active' here would
+                // silently undo an "Inactive" status set earlier).
+                status: (isEditMode && existingData[editIdx]) ? existingData[editIdx].status : 'Active'
             });
         });
 
@@ -326,11 +376,14 @@
             return;
         }
 
-        var existingData = JSON.parse(localStorage.getItem('savedLeaveEligibility') || '[]');
-        existingData = existingData.concat(newRecords);
+        if (isEditMode) {
+            existingData[editIdx] = newRecords[0];
+        } else {
+            existingData = existingData.concat(newRecords);
+        }
         localStorage.setItem('savedLeaveEligibility', JSON.stringify(existingData));
 
-        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: 'Leave Eligibility saved successfully!', type: 'success' }));
+        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: isEditMode ? 'Leave Eligibility updated successfully!' : 'Leave Eligibility saved successfully!', type: 'success' }));
         var targetUrl = '@Url.Action("LeaveEligibilityIndex", "Master")';
         if (typeof loadPageContent === 'function') {
             loadPageContent(targetUrl, true);

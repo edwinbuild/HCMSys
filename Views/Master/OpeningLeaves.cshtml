@@ -71,7 +71,7 @@
                         <i class="fas fa-arrow-left fa-sm text-white-50 mr-1"></i> Back to List
                     </a>
                     <button type="button" class="btn btn-success btn-sm shadow-sm ml-2" onclick="saveRecord()">
-                        <i class="fas fa-save fa-sm text-white-50 mr-1"></i> Save
+                        <i class="fas fa-save fa-sm text-white-50 mr-1"></i> <span id="save-btn-label">Save</span>
                     </button>
                 </div>
             </div>
@@ -152,8 +152,17 @@
     var employeesData = [];
     var leaveTypesData = [];
 
+    // Edit mode: ?idx=<array index into savedOpeningLeaves> means "edit this existing record" instead
+    // of creating a new one — navigated to directly from OpeningLeavesIndex's Edit link (a plain page
+    // link now, no modal) exactly like CreateLeaveApplication's own ?id= pattern.
+    var urlParams = new URLSearchParams(window.location.search);
+    var editIdx = urlParams.has('idx') ? parseInt(urlParams.get('idx'), 10) : -1;
+    var isEditMode = !isNaN(editIdx) && editIdx >= 0;
+
     $(document).ready(function() {
-        initHeader();
+        if (!isEditMode) {
+            initHeader();
+        }
 
         $.when(
             $.getJSON('/Master/GetApiEmployees'),
@@ -163,9 +172,13 @@
             employeesData = Array.isArray(empArr) ? (Array.isArray(empArr[0]) ? empArr[0] : empArr) : [];
             var leaveData = (leaveRes && leaveRes[0]) ? leaveRes[0] : leaveRes;
             leaveTypesData = leaveData.leaveTypes || (Array.isArray(leaveData) ? leaveData : []);
-            
-            // Automatically add initial clean row
-            addRow();
+
+            if (isEditMode) {
+                loadRecordForEdit(editIdx);
+            } else {
+                // Automatically add initial clean row
+                addRow();
+            }
         }).fail(function() {
             alertify.log('Failed to load Opening Leaves data.', 'error', 5000);
         });
@@ -175,6 +188,35 @@
             defaultDate: "today"
         });
     });
+
+    // Loads an existing record (by its index in savedOpeningLeaves) into the header + a single pre-filled
+    // grid row, switching the page into "update this record" mode. Mirrors the one-record-at-a-time
+    // granularity the old Edit modal had — "Add Row" is hidden in edit mode for the same reason.
+    function loadRecordForEdit(idx) {
+        var existingData = JSON.parse(localStorage.getItem('savedOpeningLeaves') || '[]');
+        var item = existingData[idx];
+
+        if (!item) {
+            alertify.log('That Opening Leaves record could not be found.', 'error', 5000);
+            window.location.href = '@Url.Action("OpeningLeavesIndex", "Master")';
+            return;
+        }
+
+        $('.page-title-text').html('<i class="fas fa-calendar-plus fa-sm text-primary mr-2"></i> Edit Opening Leaves');
+        $('#save-btn-label').text('Update');
+        $('#hdr-docno').val(item.docNo || '');
+        $('#hdr-date').val(item.date || '');
+        $('#hdr-comments').val(item.comments || '');
+        $('[onclick="addRow()"]').hide();
+
+        addRow();
+        var $row = $('#user-grid-table tbody tr').first();
+        $row.find('.remove-item-btn').hide();
+        $row.find('.grid-employee').val(item.employeeId || '').trigger('change');
+        $row.find('.grid-leavetype').val(item.leaveTypeId || '').trigger('change');
+        $row.find('.grid-duration').val(item.duration || '');
+        $row.find('.grid-remarks').val(item.remarks || '');
+    }
 
     function initHeader() {
         var d = new Date();
@@ -268,6 +310,7 @@
 
         var newRecords = [];
         var isValid = true;
+        var existingData = JSON.parse(localStorage.getItem('savedOpeningLeaves') || '[]');
 
         rows.each(function() {
             var empId = $(this).find('.grid-employee').val();
@@ -296,7 +339,10 @@
                 leaveTypeName: leaveTypeName,
                 duration: duration,
                 remarks: remarks,
-                status: 'Active'
+                // Preserve the record's existing status when editing (the create flow has no status
+                // control of its own — only the old Edit modal did — so defaulting to 'Active' here would
+                // silently undo an "Inactive" status set earlier).
+                status: (isEditMode && existingData[editIdx]) ? existingData[editIdx].status : 'Active'
             });
         });
 
@@ -305,11 +351,14 @@
             return;
         }
 
-        var existingData = JSON.parse(localStorage.getItem('savedOpeningLeaves') || '[]');
-        existingData = existingData.concat(newRecords);
+        if (isEditMode) {
+            existingData[editIdx] = newRecords[0];
+        } else {
+            existingData = existingData.concat(newRecords);
+        }
         localStorage.setItem('savedOpeningLeaves', JSON.stringify(existingData));
 
-        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: 'Opening Leaves saved successfully!', type: 'success' }));
+        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: isEditMode ? 'Opening Leaves updated successfully!' : 'Opening Leaves saved successfully!', type: 'success' }));
         var targetUrl = '@Url.Action("OpeningLeavesIndex", "Master")';
         if (typeof loadPageContent === 'function') {
             loadPageContent(targetUrl, true);
