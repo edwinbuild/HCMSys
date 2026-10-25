@@ -99,7 +99,7 @@
                         <i class="fas fa-arrow-left fa-sm text-white-50 mr-1"></i> Back to List
                     </a>
                     <button type="button" class="btn btn-success btn-sm shadow-sm ml-2" onclick="saveClaim()">
-                        <i class="fas fa-save fa-sm text-white-50 mr-1"></i> Save
+                        <i class="fas fa-save fa-sm text-white-50 mr-1"></i> <span id="save-btn-label">Save</span>
                     </button>
                 </div>
             </div>
@@ -256,8 +256,17 @@
     var claimMasterData = [];
     var stagedClaims = [];
 
+    // Edit mode: ?idx=<array index into savedClaims> means "edit this existing record" instead
+    // of creating a new one — navigated to directly from ClaimIndex's Edit link (a plain page
+    // link now, no modal/sessionStorage handoff) exactly like CreateLeaveApplication's own ?id= pattern.
+    var urlParams = new URLSearchParams(window.location.search);
+    var editIdx = urlParams.has('idx') ? parseInt(urlParams.get('idx'), 10) : -1;
+    var isEditMode = !isNaN(editIdx) && editIdx >= 0;
+
     $(document).ready(function() {
-        initHeader();
+        if (!isEditMode) {
+            initHeader();
+        }
 
         $.when(
             $.getJSON('/Master/GetApiEmployees'),
@@ -274,10 +283,14 @@
             if (Array.isArray(claimMasterData) && claimMasterData.length > 0 && Array.isArray(claimMasterData[0])) {
                 claimMasterData = claimMasterData[0];
             }
-            
+
             populateDropdowns();
             // Make all dropdowns searchable
             $('select.form-control').select2({ width: '100%' });
+
+            if (isEditMode) {
+                loadClaimForEdit(editIdx);
+            }
         }).fail(function() {
             alertify.log('Failed to load JSON data from /assets/', 'error', 5000);
         });
@@ -306,6 +319,44 @@
         $('#hdr-docno').val('CLM-' + mm + '-' + yy + '-' + seq);
     }
 
+    // Loads an existing record (by its index in savedClaims) into the header + the full staged
+    // claim-lines grid, switching the page into "update this record" mode.
+    function loadClaimForEdit(idx) {
+        var existingData = JSON.parse(localStorage.getItem('savedClaims') || '[]');
+        var item = existingData[idx];
+
+        if (!item) {
+            alertify.log('That Claim record could not be found.', 'error', 5000);
+            window.location.href = '@Url.Action("ClaimIndex", "Master")';
+            return;
+        }
+
+        $('.page-title-text').html('<i class="fas fa-money-bill fa-sm text-primary mr-2"></i> Edit Claim');
+        $('#save-btn-label').text('Update');
+        $('#hdr-docno').val(item.docNo || '');
+        $('#hdr-date').val(item.date || '');
+        $('#hdr-comments').val(item.comments || '');
+        if (item.paymentType) $('#hdr-paymenttype').val(item.paymentType);
+
+        stagedClaims = Array.isArray(item.items) ? item.items.slice() : [];
+
+        var empId = item.employeeId;
+        if (!empId && item.employeeName) {
+            var matchEmp = employeesData.find(e => (e.name || e.sName) === item.employeeName);
+            if (matchEmp) empId = matchEmp.id || matchEmp.iMasterId;
+        }
+        $('#hdr-employee').val(empId || '').trigger('change');
+
+        var curId = item.currencyId;
+        if (!curId && item.currency) {
+            var matchCur = currencyData.find(c => c.code === item.currency);
+            if (matchCur) curId = matchCur.id || matchCur.code;
+        }
+        $('#hdr-currency').val(curId || '').trigger('change');
+
+        renderGrid();
+    }
+
     function populateDropdowns() {
         var empSelect = $('#hdr-employee');
         empSelect.empty().append('<option value="">Select Employee...</option>');
@@ -322,7 +373,8 @@
         curSelect.empty().append('<option value="">Select Currency...</option>');
         if (Array.isArray(currencyData)) {
             currencyData.forEach(function(cur) {
-                curSelect.append(`<option value="${cur.code}">${cur.code} - ${cur.name}</option>`);
+                var curId = cur.id || cur.code || '';
+                curSelect.append(`<option value="${curId}">${cur.code} - ${cur.name}</option>`);
             });
         }
 
@@ -468,20 +520,33 @@
             return;
         }
 
+        var existingClaims = JSON.parse(localStorage.getItem('savedClaims') || '[]');
+
         var newClaim = {
             docNo: $('#hdr-docno').val(),
             date: $('#hdr-date').val(),
+            employeeId: $('#hdr-employee').val(),
             employeeName: $('#hdr-employee option:selected').text().split(' - ')[1] || $('#hdr-employee option:selected').text(),
-            totalAmount: $('#sum-amount').text(),
+            currencyId: $('#hdr-currency').val(),
             currency: $('#sum-currency').text(),
-            status: 'Pending'
+            paymentType: $('#hdr-paymenttype').val(),
+            comments: $('#hdr-comments').val() || '',
+            totalAmount: $('#sum-amount').text(),
+            items: stagedClaims,
+            // Preserve the record's existing status when editing — the create flow has no status
+            // control of its own, so defaulting to 'Pending' here would silently undo any status
+            // progression (e.g. Approved) set elsewhere.
+            status: (isEditMode && existingClaims[editIdx]) ? existingClaims[editIdx].status : 'Pending'
         };
 
-        var existingClaims = JSON.parse(localStorage.getItem('savedClaims') || '[]');
-        existingClaims.push(newClaim);
+        if (isEditMode) {
+            existingClaims[editIdx] = newClaim;
+        } else {
+            existingClaims.push(newClaim);
+        }
         localStorage.setItem('savedClaims', JSON.stringify(existingClaims));
 
-        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: 'Claim saved successfully!', type: 'success' }));
+        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: isEditMode ? 'Claim updated successfully!' : 'Claim saved successfully!', type: 'success' }));
         var targetUrl = '@Url.Action("ClaimIndex", "Master")';
         if (typeof loadPageContent === 'function') {
             loadPageContent(targetUrl, true);

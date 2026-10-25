@@ -99,7 +99,7 @@
                         <i class="fas fa-arrow-left fa-sm text-white-50 mr-1"></i> Back to List
                     </a>
                     <button type="button" class="btn btn-success btn-sm shadow-sm ml-2" onclick="saveBusinessTrip()">
-                        <i class="fas fa-save fa-sm text-white-50 mr-1"></i> Save
+                        <i class="fas fa-save fa-sm text-white-50 mr-1"></i> <span id="save-btn-label">Save</span>
                     </button>
                 </div>
             </div>
@@ -272,8 +272,18 @@
     var rateMatrix = [];
     var stagedTrips = [];
 
+    // Edit mode: ?idx=<array index into savedBusinessTrips> means "edit this existing record"
+    // instead of creating a new one — navigated to directly from BusinessTripIndex's Edit link
+    // (a plain page link now, no modal/sessionStorage handoff) exactly like CreateLeaveApplication's
+    // own ?id= pattern.
+    var urlParams = new URLSearchParams(window.location.search);
+    var editIdx = urlParams.has('idx') ? parseInt(urlParams.get('idx'), 10) : -1;
+    var isEditMode = !isNaN(editIdx) && editIdx >= 0;
+
     $(document).ready(function() {
-        initHeader();
+        if (!isEditMode) {
+            initHeader();
+        }
 
         $.when(
             $.getJSON('/Master/GetApiEmployees'),
@@ -295,10 +305,14 @@
             if (Array.isArray(rateMatrix) && rateMatrix.length > 0 && Array.isArray(rateMatrix[0])) {
                 rateMatrix = rateMatrix[0];
             }
-            
+
             populateDropdowns();
             // Make all dropdowns searchable
             $('select.form-control').select2({ width: '100%' });
+
+            if (isEditMode) {
+                loadTripForEdit(editIdx);
+            }
         }).fail(function() {
             alertify.log('Failed to load JSON data from /assets/', 'error', 5000);
         });
@@ -328,6 +342,44 @@
         var saved = JSON.parse(localStorage.getItem('savedBusinessTrips') || '[]');
         var seq = String(saved.length + 1).padStart(5, '0');
         $('#hdr-docno').val('BTR-' + mm + '-' + yy + '-' + seq);
+    }
+
+    // Loads an existing record (by its index in savedBusinessTrips) into the header + the full
+    // staged trip-lines grid, switching the page into "update this record" mode.
+    function loadTripForEdit(idx) {
+        var existingData = JSON.parse(localStorage.getItem('savedBusinessTrips') || '[]');
+        var item = existingData[idx];
+
+        if (!item) {
+            alertify.log('That Business Trip record could not be found.', 'error', 5000);
+            window.location.href = '@Url.Action("BusinessTripIndex", "Master")';
+            return;
+        }
+
+        $('.page-title-text').html('<i class="fas fa-plane fa-sm text-primary mr-2"></i> Edit Business Trip');
+        $('#save-btn-label').text('Update');
+        $('#hdr-docno').val(item.docNo || '');
+        $('#hdr-date').val(item.date || '');
+        $('#hdr-comments').val(item.comments || '');
+        if (item.paymentType) $('#hdr-paymenttype').val(item.paymentType);
+
+        stagedTrips = Array.isArray(item.items) ? item.items.slice() : [];
+
+        var empId = item.employeeId;
+        if (!empId && item.employeeName) {
+            var matchEmp = employeesData.find(e => (e.name || e.sName) === item.employeeName);
+            if (matchEmp) empId = matchEmp.id || matchEmp.iMasterId;
+        }
+        $('#hdr-employee').val(empId || '').trigger('change');
+
+        var curId = item.currencyId;
+        if (!curId && item.currency) {
+            var matchCur = currencyData.find(c => c.code === item.currency);
+            if (matchCur) curId = matchCur.id || matchCur.code;
+        }
+        $('#hdr-currency').val(curId || '').trigger('change');
+
+        renderGrid();
     }
 
     function populateDropdowns() {
@@ -558,20 +610,33 @@
             return;
         }
 
+        var existingTrips = JSON.parse(localStorage.getItem('savedBusinessTrips') || '[]');
+
         var newTrip = {
             docNo: $('#hdr-docno').val(),
             date: $('#hdr-date').val(),
+            employeeId: $('#hdr-employee').val(),
             employeeName: $('#hdr-employee option:selected').text().split(' - ')[1] || $('#hdr-employee option:selected').text(),
-            totalAmount: $('#sum-amount').text(),
+            currencyId: $('#hdr-currency').val(),
             currency: $('#sum-currency').text(),
-            status: 'Pending'
+            paymentType: $('#hdr-paymenttype').val(),
+            comments: $('#hdr-comments').val() || '',
+            totalAmount: $('#sum-amount').text(),
+            items: stagedTrips,
+            // Preserve the record's existing status when editing — the create flow has no status
+            // control of its own, so defaulting to 'Pending' here would silently undo any status
+            // progression (e.g. Approved) set elsewhere.
+            status: (isEditMode && existingTrips[editIdx]) ? existingTrips[editIdx].status : 'Pending'
         };
 
-        var existingTrips = JSON.parse(localStorage.getItem('savedBusinessTrips') || '[]');
-        existingTrips.push(newTrip);
+        if (isEditMode) {
+            existingTrips[editIdx] = newTrip;
+        } else {
+            existingTrips.push(newTrip);
+        }
         localStorage.setItem('savedBusinessTrips', JSON.stringify(existingTrips));
 
-        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: 'Business Trip saved successfully!', type: 'success' }));
+        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: isEditMode ? 'Business Trip updated successfully!' : 'Business Trip saved successfully!', type: 'success' }));
         var targetUrl = '@Url.Action("BusinessTripIndex", "Master")';
         if (typeof loadPageContent === 'function') {
             loadPageContent(targetUrl, true);

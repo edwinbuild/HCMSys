@@ -225,11 +225,12 @@
 
         // Load data
         var savedClaims = JSON.parse(localStorage.getItem('savedClaims') || '[]');
-        
+        var createClaimUrl = '@Url.Action("CreateClaim", "Master")';
+
         savedClaims.reverse().forEach(function(claim, index) {
             var actualIndex = savedClaims.length - 1 - index;
             table.row.add([
-                    '<a href="#" class="edit-item-btn" data-toggle="modal" data-target="#Claim-modal" title="Edit"><i class="fas fa-edit fa-sm fa-fw"></i></a> ' +
+                    '<a href="' + createClaimUrl + '?idx=' + actualIndex + '" title="Edit"><i class="fas fa-edit fa-sm fa-fw"></i></a> ' +
                     '<a href="#" class="remove-item-btn" title="Delete" data-index="' + actualIndex + '"><i class="fas fa-trash-alt fa-sm fa-fw"></i></a>',
                 claim.docNo || '-',
                 claim.date || '-',
@@ -242,33 +243,8 @@
 
         updateStats(table);
 
-        // Edit handler
-        $('#claims-grid tbody').on('click', '.edit-item-btn', function (e) {
-            e.preventDefault();
-            var row = table.row($(this).parents('tr'));
-            var rowData = row.data();
-            var docNo = rowData[1];
-            var savedClaims = JSON.parse(localStorage.getItem('savedClaims') || '[]');
-            var match = savedClaims.find(c => c.docNo === docNo);
-
-            var editObj = match || {
-                docNo: docNo,
-                date: rowData[2],
-                employeeName: rowData[3],
-                currency: rowData[4],
-                totalAmount: rowData[5],
-                status: 'Pending'
-            };
-
-            sessionStorage.setItem('editClaim', JSON.stringify(editObj));
-            var createUrl = '@Url.Action("CreateClaim", "Master")';
-            if (typeof loadPageContent === 'function') {
-                loadPageContent(createUrl, true);
-            } else {
-                window.location.href = createUrl;
-            }
-            return false;
-        });
+        // Edit is now a plain link straight to the CreateClaim page (?idx=<index>), matching
+        // CreateLeaveApplication's pattern — no modal/sessionStorage handoff needed.
 
         // Delete handler
         $('#claims-grid tbody').on('click', '.remove-item-btn', function (e) {
