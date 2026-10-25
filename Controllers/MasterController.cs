@@ -39,6 +39,20 @@ namespace HCMSys.Controllers
         }
 
         [HttpGet]
+        public async Task<IActionResult> ApiHealthCheck()
+        {
+            try
+            {
+                var token = await _apiService.GetAuthTokenAsync();
+                return Json(new { online = !string.IsNullOrEmpty(token) });
+            }
+            catch
+            {
+                return Json(new { online = false });
+            }
+        }
+
+        [HttpGet]
         public async Task<IActionResult> GetApiEmployees()
         {
             List<EmployeeDto> employees = new List<EmployeeDto>();

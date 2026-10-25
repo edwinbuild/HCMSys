@@ -750,5 +750,67 @@
             loadPageContent(window.location.href, false);
         });
     </script>
+
+    <!-- API Connection Status Indicator -->
+    <div id="api-status-indicator" title="Checking server connection..." style="position: fixed; bottom: 16px; right: 16px; z-index: 1050; display: flex; align-items: center; gap: 6px; background: #ffffff; border: 1px solid #e3e6f0; border-radius: 20px; padding: 6px 12px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #5a5c69; box-shadow: 0 2px 10px rgba(0,0,0,0.15); cursor: default; user-select: none;">
+        <span id="api-status-dot" style="width: 9px; height: 9px; border-radius: 50%; background: #dddfeb; display: inline-block; flex-shrink: 0;"></span>
+        <span id="api-status-text">Checking...</span>
+    </div>
+    <style>
+        #api-status-dot.pulse {
+            animation: api-status-pulse 1.4s ease-in-out infinite;
+        }
+        @@keyframes api-status-pulse {
+            0% { box-shadow: 0 0 0 0 rgba(28, 200, 138, 0.5); }
+            70% { box-shadow: 0 0 0 6px rgba(28, 200, 138, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(28, 200, 138, 0); }
+        }
+    </style>
+    <script>
+        (function () {
+            var checking = false;
+
+            function setApiStatus(state) {
+                var $dot = $('#api-status-dot');
+                var $text = $('#api-status-text');
+                var $wrap = $('#api-status-indicator');
+
+                $dot.removeClass('pulse');
+                if (state === 'online') {
+                    $dot.css('background-color', '#1cc88a').addClass('pulse');
+                    $text.text('Server Online');
+                    $wrap.attr('title', 'Connected to the HCM API server');
+                } else if (state === 'offline') {
+                    $dot.css('background-color', '#e74a3b');
+                    $text.text('Server Offline');
+                    $wrap.attr('title', 'Could not reach the HCM API server');
+                } else {
+                    $dot.css('background-color', '#f6c23e');
+                    $text.text('Checking...');
+                    $wrap.attr('title', 'Checking server connection...');
+                }
+            }
+
+            function checkApiHealth() {
+                if (checking) return;
+                checking = true;
+                $.ajax({ url: '/Master/ApiHealthCheck', type: 'GET', timeout: 8000, cache: false })
+                    .done(function (res) {
+                        setApiStatus(res && res.online ? 'online' : 'offline');
+                    })
+                    .fail(function () {
+                        setApiStatus('offline');
+                    })
+                    .always(function () {
+                        checking = false;
+                    });
+            }
+
+            $(document).ready(function () {
+                checkApiHealth();
+                setInterval(checkApiHealth, 30000);
+            });
+        })();
+    </script>
 </body>
 </html>
