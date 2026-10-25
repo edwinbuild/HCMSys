@@ -445,6 +445,10 @@
             return;
         }
 
+        // Carry the line's originalStatus through an in-grid edit too, so tweaking a pre-loaded
+        // row (qty/remarks) before the final save doesn't also reset its status to Pending.
+        var existingStaged = editingStagedId ? stagedRequests.find(i => i.stagedId === editingStagedId) : null;
+
         var item = {
             stagedId: editingStagedId || ('STG_' + Date.now()),
             selectionCode: selectionCode,
@@ -452,7 +456,8 @@
             requestType: requestType,
             prefix: prefix,
             qty: qty,
-            remarks: remarks
+            remarks: remarks,
+            originalStatus: existingStaged ? existingStaged.originalStatus : undefined
         };
 
         if (editingStagedId) {
@@ -596,7 +601,9 @@
                 prefix: sr.prefix,
                 qty: sr.qty,
                 remarks: sr.remarks,
-                status: 'Pending',
+                // Preserve the line's existing status when editing; only brand-new rows (added during
+                // this edit, with no prior saved status) start as Pending.
+                status: sr.originalStatus || 'Pending',
                 attachmentName: attachFileName
             };
 
@@ -658,7 +665,10 @@
                 requestType: r.requestType,
                 prefix: r.prefix,
                 qty: r.qty || 1,
-                remarks: r.remarks || ''
+                remarks: r.remarks || '',
+                // Carried through to saveRequest() so updating an existing request doesn't silently
+                // reset its status (e.g. Issued/Approved) back to Pending.
+                originalStatus: r.status || 'Pending'
             };
         });
 

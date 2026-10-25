@@ -181,50 +181,96 @@
 </div>
 
 <script src="https://cdn.datatables.net/1.12.0/js/jquery.dataTables.min.js"></script>
+<script src="~/alertify.js/alertify.min.js"></script>
 <script>
+    var disbursementsTable = null;
+    var createDisbursementUrl = '@Url.Action("CreateLoanDisbursement", "Master")';
+
+    // Seed savedLoanDisbursements from the demo JSON exactly once, then only ever read/write
+    // localStorage from here on, matching the pattern used by every other prototype module.
+    function seedDisbursementsIfNeeded(callback) {
+        if (localStorage.getItem('savedLoanDisbursements')) {
+            callback();
+            return;
+        }
+        $.getJSON('/api-assets/loan_disbursements.json').done(function(data) {
+            localStorage.setItem('savedLoanDisbursements', JSON.stringify(Array.isArray(data) ? data : []));
+            callback();
+        }).fail(function() {
+            localStorage.setItem('savedLoanDisbursements', '[]');
+            callback();
+        });
+    }
+
+    function loadGridData() {
+        var data = JSON.parse(localStorage.getItem('savedLoanDisbursements') || '[]');
+        disbursementsTable.clear();
+
+        var totalSanctioned = 0;
+        var totalInterest = 0;
+
+        data.forEach(function(item) {
+            var sanctioned = parseFloat(item.sanctionedAmount) || 0;
+            var interest = parseFloat(item.interestRate) || 0;
+            var monthlyEmi = parseFloat(item.monthlyEmi) || 0;
+            totalSanctioned += sanctioned;
+            totalInterest += interest;
+
+            var actionHtml = '<div class="action-btns" style="text-align:center;">' +
+                '<a href="' + createDisbursementUrl + '?docNo=' + encodeURIComponent(item.disbursementNo || '') + '" title="Edit"><i class="fas fa-edit"></i></a> ' +
+                '<a href="#" class="remove-item-btn" data-docno="' + (item.disbursementNo || '') + '" title="Delete"><i class="fas fa-trash-alt"></i></a>' +
+                '</div>';
+
+            disbursementsTable.row.add([
+                actionHtml,
+                '<strong>' + (item.disbursementNo || '-') + '</strong>',
+                window.formatDateDisplay(item.disbursementDate),
+                item.requestNo || '-',
+                (item.employeeCode || '') + ' - ' + (item.employeeName || ''),
+                item.loanTypeName || '-',
+                sanctioned.toLocaleString('en-US', {minimumFractionDigits: 2}),
+                interest + '%',
+                (item.noOfMonths || '-') + ' Mos',
+                window.formatDateDisplay(item.emiStartDate),
+                monthlyEmi.toLocaleString('en-US', {minimumFractionDigits: 2}),
+                '<span class="badge badge-success">' + (item.status || 'Active') + '</span>'
+            ]);
+        });
+
+        $('#stat-total').text(data.length);
+        $('#stat-sanctioned').text('$' + totalSanctioned.toLocaleString('en-US', {minimumFractionDigits: 2}));
+        $('#stat-interest').text(data.length > 0 ? (totalInterest / data.length).toFixed(1) + '%' : '0.0%');
+        $('#stat-active').text(data.length);
+
+        disbursementsTable.draw(false);
+    }
+
     $(document).ready(function() {
-        $.getJSON('/api-assets/loan_disbursements.json', function(data) {
-            var tbody = $('#disbursements-grid tbody');
-            tbody.empty();
-            
-            var totalSanctioned = 0;
-            var totalInterest = 0;
+        disbursementsTable = $('#disbursements-grid').DataTable({
+            pageLength: 10,
+            order: [[1, 'desc']],
+            language: {
+                search: "_INPUT_",
+                searchPlaceholder: "Search disbursements..."
+            },
+            columnDefs: [
+                { orderable: false, targets: 0 }
+            ]
+        });
 
-            data.forEach(function(item) {
-                totalSanctioned += item.sanctionedAmount;
-                totalInterest += item.interestRate;
+        seedDisbursementsIfNeeded(loadGridData);
 
-                var row = `<tr>
-                    <td class="action-btns" style="text-align: center;">
-                        <a href="#" title="Edit"><i class="fas fa-edit"></i></a>
-                        <a href="#" title="Delete"><i class="fas fa-trash-alt"></i></a>
-                    </td>
-                    <td><strong>${item.disbursementNo}</strong></td>
-                    <td>${window.formatDateDisplay(item.disbursementDate)}</td>
-                    <td>${item.requestNo}</td>
-                    <td>${item.employeeCode} - ${item.employeeName}</td>
-                    <td>${item.loanTypeName}</td>
-                    <td class="num-col">${item.sanctionedAmount.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-                    <td class="num-col">${item.interestRate}%</td>
-                    <td class="num-col">${item.noOfMonths} Mos</td>
-                    <td>${window.formatDateDisplay(item.emiStartDate)}</td>
-                    <td class="num-col">${item.monthlyEmi.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-                    <td><span class="badge badge-success">${item.status}</span></td>
-                </tr>`;
-                tbody.append(row);
-            });
+        $('#disbursements-grid tbody').on('click', '.remove-item-btn', function (e) {
+            e.preventDefault();
+            var docNo = $(this).data('docno');
 
-            $('#stat-total').text(data.length);
-            $('#stat-sanctioned').text('$' + totalSanctioned.toLocaleString('en-US', {minimumFractionDigits: 2}));
-            $('#stat-interest').text(data.length > 0 ? (totalInterest / data.length).toFixed(1) + '%' : '0.0%');
-            $('#stat-active').text(data.length);
-
-            $('#disbursements-grid').DataTable({
-                pageLength: 10,
-                order: [[1, 'desc']],
-                language: {
-                    search: "_INPUT_",
-                    searchPlaceholder: "Search disbursements..."
+            alertify.confirm('Are you sure you want to delete disbursement: ' + docNo + '?', function (confirmed) {
+                if (confirmed) {
+                    var data = JSON.parse(localStorage.getItem('savedLoanDisbursements') || '[]');
+                    data = data.filter(function(r) { return r.disbursementNo !== docNo; });
+                    localStorage.setItem('savedLoanDisbursements', JSON.stringify(data));
+                    loadGridData();
+                    alertify.log('Disbursement ' + docNo + ' deleted successfully.', 'success', 3500);
                 }
             });
         });

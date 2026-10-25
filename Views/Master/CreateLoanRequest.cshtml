@@ -97,7 +97,7 @@
                         <i class="fas fa-arrow-left fa-sm text-white-50 mr-1"></i> Back to List
                     </a>
                     <button type="button" class="btn btn-success btn-sm shadow-sm ml-2" onclick="saveLoanRequest()">
-                        <i class="fas fa-save fa-sm text-white-50 mr-1"></i> Save Request
+                        <i class="fas fa-save fa-sm text-white-50 mr-1"></i> <span id="save-btn-label">Save Request</span>
                     </button>
                 </div>
             </div>
@@ -286,8 +286,16 @@
     var loanTypesData = [];
     var stagedLoans = [];
 
+    // Edit mode: ?id=<record id in savedLoanRequests> means "edit this existing request" instead
+    // of creating a new one, navigated to directly from LoanRequestIndex's Edit link.
+    var urlParams = new URLSearchParams(window.location.search);
+    var editId = urlParams.has('id') ? urlParams.get('id') : null;
+    var isEditMode = !!editId;
+
     $(document).ready(function() {
-        initHeader();
+        if (!isEditMode) {
+            initHeader();
+        }
 
         $.when(
             $.getJSON('/Master/GetApiEmployees'),
@@ -299,10 +307,14 @@
             if (Array.isArray(loanTypesData) && loanTypesData.length > 0 && Array.isArray(loanTypesData[0])) {
                 loanTypesData = loanTypesData[0];
             }
-            
+
             populateDropdowns();
             $('select.form-control').select2({ width: '100%' });
             onEmiTypeChange();
+
+            if (isEditMode) {
+                loadRequestForEdit(editId);
+            }
         }).fail(function() {
             if (typeof alertify !== 'undefined') {
                 alertify.log('Failed to load employee/loan data', 'error', 5000);
@@ -329,6 +341,47 @@
         var saved = JSON.parse(localStorage.getItem('savedLoanRequests') || '[]');
         var seq = String(saved.length + 1).padStart(5, '0');
         $('#hdr-docno').val('LON-' + mm + '-' + yy + '-' + seq);
+    }
+
+    // Loads an existing record (by its id in savedLoanRequests) into the header + a single
+    // pre-filled grid row, switching the page into "update this record" mode. Adding further new
+    // lines during an edit is out of scope here, matching the single-row-edit pattern used for
+    // LeaveAdjustments/LeaveEligibility/OpeningLeaves.
+    function loadRequestForEdit(id) {
+        var existingData = JSON.parse(localStorage.getItem('savedLoanRequests') || '[]');
+        var item = existingData.find(function(r) { return String(r.id) === String(id); });
+
+        if (!item) {
+            alertify.log('That Loan Request record could not be found.', 'error', 5000);
+            window.location.href = '@Url.Action("LoanRequestIndex", "Master")';
+            return;
+        }
+
+        $('.page-title-text').html('<i class="fas fa-hand-holding-usd fa-sm text-primary mr-2"></i> Edit Loan Request');
+        $('#save-btn-label').text('Update Request');
+        $('#hdr-docno').val(item.docNo || '');
+        $('#hdr-date').val(item.date || '');
+        $('#hdr-comments').val(item.comments || '');
+        $('#hdr-employee').val(item.employeeId || '').trigger('change');
+
+        stagedLoans = [{
+            id: item.id,
+            loanTypeId: item.loanTypeId,
+            loanTypeName: item.loanTypeName,
+            loanAmount: item.loanAmount,
+            neededBy: item.neededBy,
+            emiStartDate: item.emiStartDate,
+            emiType: item.emiType,
+            months: item.months,
+            emiAmount: item.emiAmount,
+            guarantorId: item.guarantorId,
+            guarantorName: item.guarantorName,
+            interestType: item.interestType
+        }];
+        renderGrid();
+
+        $('[onclick="addToGrid()"]').hide();
+        $('#loan-grid-table tbody .action-btns').hide();
     }
 
     function populateDropdowns() {
@@ -517,11 +570,67 @@
             alertify.log('Please select an Employee!', 'error', 5000);
             return;
         }
-        if (stagedLoans.length === 0 && parseNumber($('#dtl-loanamount').val()) <= 0) {
+        if (stagedLoans.length === 0) {
             alertify.log('Please add at least one loan detail entry!', 'error', 5000);
             return;
         }
-        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: 'Loan Request saved successfully!', type: 'success' }));
+
+        var empOpt = $('#hdr-employee option:selected');
+        var empCode = empOpt.text().split(' - ')[0] || '';
+        var empName = empOpt.text().split(' - ')[1] || empOpt.text();
+        var docNo = $('#hdr-docno').val();
+        var docDate = $('#hdr-date').val();
+        var comments = $('#hdr-comments').val() || '';
+        var designation = $('#hdr-designation').val();
+        var department = $('#hdr-department').val();
+
+        var existingData = JSON.parse(localStorage.getItem('savedLoanRequests') || '[]');
+
+        function buildRecord(id, sr, status) {
+            return {
+                id: id,
+                docNo: docNo,
+                date: docDate,
+                employeeId: empId,
+                employeeCode: empCode,
+                employeeName: empName,
+                designation: designation,
+                department: department,
+                comments: comments,
+                loanTypeId: sr.loanTypeId,
+                loanTypeName: sr.loanTypeName,
+                loanAmount: sr.loanAmount,
+                neededBy: sr.neededBy,
+                emiStartDate: sr.emiStartDate,
+                emiType: sr.emiType,
+                months: sr.months,
+                emiAmount: sr.emiAmount,
+                guarantorId: sr.guarantorId,
+                guarantorName: sr.guarantorName,
+                interestType: sr.interestType,
+                status: status
+            };
+        }
+
+        if (isEditMode) {
+            var idx = existingData.findIndex(function(r) { return String(r.id) === String(editId); });
+            // Preserve the record's existing status when editing, instead of resetting it to Pending.
+            var prevStatus = (idx > -1) ? existingData[idx].status : 'Pending';
+            var updatedRecord = buildRecord(editId, stagedLoans[0], prevStatus || 'Pending');
+            if (idx > -1) {
+                existingData[idx] = updatedRecord;
+            } else {
+                existingData.push(updatedRecord);
+            }
+        } else {
+            stagedLoans.forEach(function(sr, idx2) {
+                existingData.push(buildRecord(Date.now() + idx2, sr, 'Pending'));
+            });
+        }
+
+        localStorage.setItem('savedLoanRequests', JSON.stringify(existingData));
+
+        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: isEditMode ? 'Loan Request updated successfully!' : 'Loan Request saved successfully!', type: 'success' }));
         var targetUrl = '@Url.Action("LoanRequestIndex", "Master")';
         if (typeof loadPageContent === 'function') {
             loadPageContent(targetUrl, true);

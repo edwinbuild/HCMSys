@@ -93,7 +93,7 @@
                     <div class="row no-gutters align-items-center">
                         <div class="col mr-2">
                             <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Total Deferments</div>
-                            <div class="h5 mb-0 font-weight-bold text-gray-800">2</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="stat-total">--</div>
                         </div>
                         <div class="col-auto">
                             <i class="fas fa-history fa-2x text-gray-300"></i>
@@ -108,7 +108,7 @@
                     <div class="row no-gutters align-items-center">
                         <div class="col mr-2">
                             <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Active Loan Deferments</div>
-                            <div class="h5 mb-0 font-weight-bold text-gray-800">2</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="stat-active">--</div>
                         </div>
                         <div class="col-auto">
                             <i class="fas fa-clock fa-2x text-gray-300"></i>
@@ -123,7 +123,7 @@
                     <div class="row no-gutters align-items-center">
                         <div class="col mr-2">
                             <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Total Deferred Balance</div>
-                            <div class="h5 mb-0 font-weight-bold text-gray-800">$ 350,000.00</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="stat-balance">$ --</div>
                         </div>
                         <div class="col-auto">
                             <i class="fas fa-hand-holding-usd fa-2x text-gray-300"></i>
@@ -153,20 +153,6 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr>
-                            <td class="action-btns" style="text-align: center;">
-                                <a href="#" title="Edit"><i class="fas fa-edit"></i></a>
-                                <a href="#" title="Delete"><i class="fas fa-trash-alt"></i></a>
-                            </td>
-                            <td><strong>DEF-07-26-00001</strong></td>
-                            <td>26-Jul-2026</td>
-                            <td>DSB-07-26-00001</td>
-                            <td>EMP-001 - John Smith</td>
-                            <td>Personal Loan</td>
-                            <td class="num-col">106,500.00</td>
-                            <td class="num-col text-primary font-weight-bold">106,500.00</td>
-                            <td><span class="badge badge-warning">Active Deferment</span></td>
-                        </tr>
                     </tbody>
                 </table>
             </div>
@@ -176,15 +162,109 @@
 </div>
 
 <script src="https://cdn.datatables.net/1.12.0/js/jquery.dataTables.min.js"></script>
+<script src="~/alertify.js/alertify.min.js"></script>
 <script>
+    var defermentTable = null;
+    var createDefermentUrl = '@Url.Action("CreateLoanDeferment", "Master")';
+
+    // Seed savedLoanDeferments with the original two demo rows exactly once, then only ever
+    // read/write localStorage from here on, matching the pattern used by every other prototype module.
+    function seedDefermentsIfNeeded() {
+        if (localStorage.getItem('savedLoanDeferments')) return;
+        var demoRows = [
+            {
+                defermentNo: 'DEF-07-26-00001',
+                date: '26-Jul-2026',
+                disbursementNo: 'DSB-07-26-00001',
+                employeeCode: 'EMP-001',
+                employeeName: 'John Smith',
+                loanTypeName: 'Personal Loan',
+                originalAmount: 106500,
+                modifiedAmount: 106500,
+                status: 'Active Deferment'
+            },
+            {
+                defermentNo: 'DEF-07-26-00002',
+                date: '27-Jul-2026',
+                disbursementNo: 'DSB-07-26-00002',
+                employeeCode: 'EMP-002',
+                employeeName: 'Sarah Connor',
+                loanTypeName: 'Emergency Loan',
+                originalAmount: 243500,
+                modifiedAmount: 243500,
+                status: 'Active Deferment'
+            }
+        ];
+        localStorage.setItem('savedLoanDeferments', JSON.stringify(demoRows));
+    }
+
+    function loadGridData() {
+        var data = JSON.parse(localStorage.getItem('savedLoanDeferments') || '[]');
+        defermentTable.clear();
+
+        var totalBalance = 0;
+        var activeCount = 0;
+
+        data.forEach(function(item) {
+            var originalAmount = parseFloat(item.originalAmount) || 0;
+            var modifiedAmount = parseFloat(item.modifiedAmount) || 0;
+            totalBalance += modifiedAmount;
+            if (item.status === 'Active Deferment') activeCount++;
+
+            var actionHtml = '<div class="action-btns" style="text-align:center;">' +
+                '<a href="' + createDefermentUrl + '?docNo=' + encodeURIComponent(item.defermentNo || '') + '" title="Edit"><i class="fas fa-edit"></i></a> ' +
+                '<a href="#" class="remove-item-btn" data-docno="' + (item.defermentNo || '') + '" title="Delete"><i class="fas fa-trash-alt"></i></a>' +
+                '</div>';
+
+            defermentTable.row.add([
+                actionHtml,
+                '<strong>' + (item.defermentNo || '-') + '</strong>',
+                item.date || '-',
+                item.disbursementNo || '-',
+                (item.employeeCode || '') + ' - ' + (item.employeeName || ''),
+                item.loanTypeName || '-',
+                originalAmount.toLocaleString('en-US', {minimumFractionDigits: 2}),
+                modifiedAmount.toLocaleString('en-US', {minimumFractionDigits: 2}),
+                '<span class="badge badge-warning">' + (item.status || 'Active Deferment') + '</span>'
+            ]);
+        });
+
+        $('#stat-total').text(data.length);
+        $('#stat-active').text(activeCount);
+        $('#stat-balance').text('$' + totalBalance.toLocaleString('en-US', {minimumFractionDigits: 2}));
+
+        defermentTable.draw(false);
+    }
+
     $(document).ready(function() {
-        $('#deferment-grid').DataTable({
+        defermentTable = $('#deferment-grid').DataTable({
             pageLength: 10,
             order: [[1, 'desc']],
             language: {
                 search: "_INPUT_",
                 searchPlaceholder: "Search deferments..."
-            }
+            },
+            columnDefs: [
+                { orderable: false, targets: 0 }
+            ]
+        });
+
+        seedDefermentsIfNeeded();
+        loadGridData();
+
+        $('#deferment-grid tbody').on('click', '.remove-item-btn', function (e) {
+            e.preventDefault();
+            var docNo = $(this).data('docno');
+
+            alertify.confirm('Are you sure you want to delete deferment: ' + docNo + '?', function (confirmed) {
+                if (confirmed) {
+                    var data = JSON.parse(localStorage.getItem('savedLoanDeferments') || '[]');
+                    data = data.filter(function(r) { return r.defermentNo !== docNo; });
+                    localStorage.setItem('savedLoanDeferments', JSON.stringify(data));
+                    loadGridData();
+                    alertify.log('Deferment ' + docNo + ' deleted successfully.', 'success', 3500);
+                }
+            });
         });
     });
 </script>

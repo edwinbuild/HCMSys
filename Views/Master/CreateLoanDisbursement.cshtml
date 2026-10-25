@@ -83,7 +83,7 @@
                         <i class="fas fa-arrow-left fa-sm text-white-50 mr-1"></i> Back to List
                     </a>
                     <button type="button" class="btn btn-success btn-sm shadow-sm ml-2" onclick="saveDisbursement()">
-                        <i class="fas fa-save fa-sm text-white-50 mr-1"></i> Process Disbursement
+                        <i class="fas fa-save fa-sm text-white-50 mr-1"></i> <span id="save-btn-label">Process Disbursement</span>
                     </button>
                 </div>
             </div>
@@ -263,14 +263,19 @@
     var requestsData = [];
     var selectedRequest = null;
 
-    $(document).ready(function() {
-        initHeader();
+    // Edit mode: ?docNo=<disbursementNo in savedLoanDisbursements> means "edit this existing
+    // disbursement" instead of processing a new one, navigated to directly from
+    // LoanDisbursementIndex's Edit link.
+    var urlParams = new URLSearchParams(window.location.search);
+    var editDocNo = urlParams.get('docNo') || '';
+    var isEditMode = !!editDocNo;
 
-        $.getJSON('/api-assets/loan_requests.json', function(res) {
-            var staticReqs = Array.isArray(res) ? (Array.isArray(res[0]) ? res[0] : res) : [];
-            var savedReqs = JSON.parse(localStorage.getItem('savedLoanRequests') || '[]');
-            requestsData = savedReqs.concat(staticReqs);
-            
+    $(document).ready(function() {
+        if (!isEditMode) {
+            initHeader();
+        }
+
+        function populateRequestDropdown() {
             var reqSelect = $('#hdr-requestno');
             reqSelect.empty().append('<option value="">Select Request Number...</option>');
             if (Array.isArray(requestsData)) {
@@ -282,18 +287,20 @@
                 });
             }
             reqSelect.select2({ width: '100%' });
-        }).fail(function() {
+
+            if (isEditMode) {
+                loadDisbursementForEdit(editDocNo);
+            }
+        }
+
+        $.getJSON('/api-assets/loan_requests.json', function(res) {
+            var staticReqs = Array.isArray(res) ? (Array.isArray(res[0]) ? res[0] : res) : [];
             var savedReqs = JSON.parse(localStorage.getItem('savedLoanRequests') || '[]');
-            requestsData = savedReqs;
-            var reqSelect = $('#hdr-requestno');
-            reqSelect.empty().append('<option value="">Select Request Number...</option>');
-            requestsData.forEach(function(req) {
-                var dNo = req.docNo || req.reqNo || '';
-                var eName = req.employeeName || req.employee || 'Employee';
-                var lName = req.loanTypeName || req.loanType || 'Loan';
-                reqSelect.append(`<option value="${dNo}">${dNo} - ${eName} (${lName})</option>`);
-            });
-            reqSelect.select2({ width: '100%' });
+            requestsData = savedReqs.concat(staticReqs);
+            populateRequestDropdown();
+        }).fail(function() {
+            requestsData = JSON.parse(localStorage.getItem('savedLoanRequests') || '[]');
+            populateRequestDropdown();
         });
     });
 
@@ -309,6 +316,57 @@
         var saved = JSON.parse(localStorage.getItem('savedLoanDisbursements') || '[]');
         var seq = String(saved.length + 1).padStart(5, '0');
         $('#hdr-docno').val('DSB-' + mm + '-' + yy + '-' + seq);
+
+        // flatpickr is never attached to these inputs, so set today's date directly.
+        var todayStr = dd + '-' + mmm + '-' + yyyy;
+        $('#hdr-date').val(todayStr);
+        $('#hdr-postdate').val(todayStr);
+    }
+
+    // Loads an existing disbursement (by its disbursementNo) back into the form. The installment
+    // grid is regenerated from the saved tenure/EMI-start fields rather than re-selecting a
+    // request, since the originating request may since have been edited or removed.
+    function loadDisbursementForEdit(docNo) {
+        var existingData = JSON.parse(localStorage.getItem('savedLoanDisbursements') || '[]');
+        var item = existingData.find(function(d) { return d.disbursementNo === docNo; });
+
+        if (!item) {
+            alertify.log('That Loan Disbursement record could not be found.', 'error', 5000);
+            window.location.href = '@Url.Action("LoanDisbursementIndex", "Master")';
+            return;
+        }
+
+        $('.page-title-text').html('<i class="fas fa-file-signature fa-sm text-primary mr-2"></i> Edit Loan Disbursement');
+        $('#save-btn-label').text('Update Disbursement');
+        $('#hdr-docno').val(item.disbursementNo || '');
+        $('#hdr-date').val(item.disbursementDate || '');
+
+        var reqOption = $('#hdr-requestno option').filter(function() { return $(this).val() === item.requestNo; });
+        if (reqOption.length > 0) {
+            $('#hdr-requestno').val(item.requestNo).trigger('change');
+        }
+
+        $('#hdr-employeename').val((item.employeeCode || '') + ' - ' + (item.employeeName || ''));
+        $('#hdr-designation').val(item.designation || '');
+        $('#hdr-department').val(item.department || '');
+        $('#hdr-manager').val(item.reportingManager || '');
+
+        $('#req-loantype').val(item.loanTypeName || '');
+        $('#req-loanamount').val(formatNumber(item.sanctionedAmount));
+        $('#req-emistartdate').val(item.emiStartDate || '');
+        $('#req-months').val(item.noOfMonths || '');
+
+        $('#disb-sanctionedamount').val(formatNumber(item.sanctionedAmount));
+        $('#disb-interestrate').val(item.interestRate || 6.5);
+
+        // generateInstallmentGrid() only reads noOfMonths/emiStartDate off selectedRequest, so a
+        // minimal substitute object is enough to regenerate the schedule without a live request.
+        selectedRequest = {
+            docNo: item.requestNo,
+            noOfMonths: item.noOfMonths,
+            emiStartDate: item.emiStartDate
+        };
+        generateInstallmentGrid();
     }
 
     function onRequestNumberChange() {
@@ -403,7 +461,51 @@
             alertify.log('Please select a valid Loan Request Number!', 'error', 5000);
             return;
         }
-        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: 'Loan Disbursement processed successfully!', type: 'success' }));
+
+        var existingData = JSON.parse(localStorage.getItem('savedLoanDisbursements') || '[]');
+
+        var record = {
+            disbursementNo: $('#hdr-docno').val(),
+            disbursementDate: $('#hdr-date').val(),
+            requestNo: selectedRequest.docNo || $('#hdr-requestno').val(),
+            employeeCode: ($('#hdr-employeename').val() || '').split(' - ')[0] || '',
+            employeeName: ($('#hdr-employeename').val() || '').split(' - ')[1] || '',
+            designation: $('#hdr-designation').val(),
+            department: $('#hdr-department').val(),
+            reportingManager: $('#hdr-manager').val(),
+            loanTypeName: $('#req-loantype').val(),
+            sanctionedAmount: parseNumber($('#disb-sanctionedamount').val()),
+            interestRate: parseFloat($('#disb-interestrate').val()) || 0,
+            noOfMonths: parseInt(selectedRequest.noOfMonths) || 0,
+            emiStartDate: selectedRequest.emiStartDate || $('#req-emistartdate').val(),
+            monthlyEmi: parseNumber($('#sum-monthlyemi').text()),
+            // Preserve existing status when editing instead of resetting it.
+            status: (isEditMode && existingData.find(function(d) { return d.disbursementNo === $('#hdr-docno').val(); })) ?
+                existingData.find(function(d) { return d.disbursementNo === $('#hdr-docno').val(); }).status : 'Active'
+        };
+
+        if (isEditMode) {
+            var idx = existingData.findIndex(function(d) { return d.disbursementNo === editDocNo; });
+            if (idx > -1) {
+                existingData[idx] = record;
+            } else {
+                existingData.push(record);
+            }
+        } else {
+            existingData.push(record);
+
+            // Mark the source request as Disbursed so it's not left looking actionable forever.
+            var savedReqs = JSON.parse(localStorage.getItem('savedLoanRequests') || '[]');
+            var reqIdx = savedReqs.findIndex(function(r) { return r.docNo === record.requestNo; });
+            if (reqIdx > -1) {
+                savedReqs[reqIdx].status = 'Disbursed';
+                localStorage.setItem('savedLoanRequests', JSON.stringify(savedReqs));
+            }
+        }
+
+        localStorage.setItem('savedLoanDisbursements', JSON.stringify(existingData));
+
+        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: isEditMode ? 'Loan Disbursement updated successfully!' : 'Loan Disbursement processed successfully!', type: 'success' }));
         var targetUrl = '@Url.Action("LoanDisbursementIndex", "Master")';
         if (typeof loadPageContent === 'function') {
             loadPageContent(targetUrl, true);

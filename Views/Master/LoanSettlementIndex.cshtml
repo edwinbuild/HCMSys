@@ -93,7 +93,7 @@
                     <div class="row no-gutters align-items-center">
                         <div class="col mr-2">
                             <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Total Settlements</div>
-                            <div class="h5 mb-0 font-weight-bold text-gray-800">1</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="stat-total">--</div>
                         </div>
                         <div class="col-auto">
                             <i class="fas fa-check-circle fa-2x text-gray-300"></i>
@@ -108,7 +108,7 @@
                     <div class="row no-gutters align-items-center">
                         <div class="col mr-2">
                             <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Total Amount Settled</div>
-                            <div class="h5 mb-0 font-weight-bold text-gray-800">$ 106,500.00</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="stat-amount">$ --</div>
                         </div>
                         <div class="col-auto">
                             <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
@@ -123,7 +123,7 @@
                     <div class="row no-gutters align-items-center">
                         <div class="col mr-2">
                             <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Closed Loan Accounts</div>
-                            <div class="h5 mb-0 font-weight-bold text-gray-800">1</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="stat-closed">--</div>
                         </div>
                         <div class="col-auto">
                             <i class="fas fa-lock fa-2x text-gray-300"></i>
@@ -153,20 +153,6 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr>
-                            <td class="action-btns" style="text-align: center;">
-                                <a href="#" title="Edit"><i class="fas fa-edit"></i></a>
-                                <a href="#" title="Delete"><i class="fas fa-trash-alt"></i></a>
-                            </td>
-                            <td><strong>STL-07-26-00001</strong></td>
-                            <td>26-Jul-2026</td>
-                            <td>DSB-07-26-00001</td>
-                            <td>EMP-001 - John Smith</td>
-                            <td>Personal Loan</td>
-                            <td class="num-col">106,500.00</td>
-                            <td class="num-col text-danger font-weight-bold">106,500.00</td>
-                            <td><span class="badge badge-danger">Settled & Closed</span></td>
-                        </tr>
                     </tbody>
                 </table>
             </div>
@@ -176,15 +162,96 @@
 </div>
 
 <script src="https://cdn.datatables.net/1.12.0/js/jquery.dataTables.min.js"></script>
+<script src="~/alertify.js/alertify.min.js"></script>
 <script>
+    var settlementTable = null;
+    var createSettlementUrl = '@Url.Action("CreateLoanSettlement", "Master")';
+
+    // Seed savedLoanSettlements with the original single demo row exactly once, then only ever
+    // read/write localStorage from here on, matching the pattern used by every other prototype module.
+    function seedSettlementsIfNeeded() {
+        if (localStorage.getItem('savedLoanSettlements')) return;
+        var demoRow = [{
+            settlementNo: 'STL-07-26-00001',
+            date: '26-Jul-2026',
+            disbursementNo: 'DSB-07-26-00001',
+            employeeCode: 'EMP-001',
+            employeeName: 'John Smith',
+            loanTypeName: 'Personal Loan',
+            originalTotal: 106500,
+            settledAmount: 106500,
+            status: 'Settled & Closed'
+        }];
+        localStorage.setItem('savedLoanSettlements', JSON.stringify(demoRow));
+    }
+
+    function loadGridData() {
+        var data = JSON.parse(localStorage.getItem('savedLoanSettlements') || '[]');
+        settlementTable.clear();
+
+        var totalSettled = 0;
+        var closedCount = 0;
+
+        data.forEach(function(item) {
+            var originalTotal = parseFloat(item.originalTotal) || 0;
+            var settledAmount = parseFloat(item.settledAmount) || 0;
+            totalSettled += settledAmount;
+            if (item.status === 'Settled & Closed') closedCount++;
+
+            var actionHtml = '<div class="action-btns" style="text-align:center;">' +
+                '<a href="' + createSettlementUrl + '?docNo=' + encodeURIComponent(item.settlementNo || '') + '" title="Edit"><i class="fas fa-edit"></i></a> ' +
+                '<a href="#" class="remove-item-btn" data-docno="' + (item.settlementNo || '') + '" title="Delete"><i class="fas fa-trash-alt"></i></a>' +
+                '</div>';
+
+            settlementTable.row.add([
+                actionHtml,
+                '<strong>' + (item.settlementNo || '-') + '</strong>',
+                item.date || '-',
+                item.disbursementNo || '-',
+                (item.employeeCode || '') + ' - ' + (item.employeeName || ''),
+                item.loanTypeName || '-',
+                originalTotal.toLocaleString('en-US', {minimumFractionDigits: 2}),
+                settledAmount.toLocaleString('en-US', {minimumFractionDigits: 2}),
+                '<span class="badge badge-danger">' + (item.status || 'Settled & Closed') + '</span>'
+            ]);
+        });
+
+        $('#stat-total').text(data.length);
+        $('#stat-amount').text('$' + totalSettled.toLocaleString('en-US', {minimumFractionDigits: 2}));
+        $('#stat-closed').text(closedCount);
+
+        settlementTable.draw(false);
+    }
+
     $(document).ready(function() {
-        $('#settlement-grid').DataTable({
+        settlementTable = $('#settlement-grid').DataTable({
             pageLength: 10,
             order: [[1, 'desc']],
             language: {
                 search: "_INPUT_",
                 searchPlaceholder: "Search settlements..."
-            }
+            },
+            columnDefs: [
+                { orderable: false, targets: 0 }
+            ]
+        });
+
+        seedSettlementsIfNeeded();
+        loadGridData();
+
+        $('#settlement-grid tbody').on('click', '.remove-item-btn', function (e) {
+            e.preventDefault();
+            var docNo = $(this).data('docno');
+
+            alertify.confirm('Are you sure you want to delete settlement: ' + docNo + '?', function (confirmed) {
+                if (confirmed) {
+                    var data = JSON.parse(localStorage.getItem('savedLoanSettlements') || '[]');
+                    data = data.filter(function(r) { return r.settlementNo !== docNo; });
+                    localStorage.setItem('savedLoanSettlements', JSON.stringify(data));
+                    loadGridData();
+                    alertify.log('Settlement ' + docNo + ' deleted successfully.', 'success', 3500);
+                }
+            });
         });
     });
 </script>

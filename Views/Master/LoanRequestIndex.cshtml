@@ -191,55 +191,106 @@
 </div>
 
 <script src="https://cdn.datatables.net/1.12.0/js/jquery.dataTables.min.js"></script>
+<script src="~/alertify.js/alertify.min.js"></script>
 <script>
-    $(document).ready(function() {
-        $.getJSON('/api-assets/loan_requests.json', function(data) {
-            var tbody = $('#loan-requests-grid tbody');
-            tbody.empty();
-            
-            var totalAmt = 0;
-            var appCount = 0;
-            var pendCount = 0;
+    var loanRequestsTable = null;
+    var createLoanRequestUrl = '@Url.Action("CreateLoanRequest", "Master")';
 
-            data.forEach(function(item) {
-                totalAmt += item.loanAmount;
-                if (item.status === 'Approved') appCount++;
-                else pendCount++;
-
-                var badgeClass = item.status === 'Approved' ? 'badge-success' : 'badge-warning';
-
-                var row = `<tr>
-                    <td class="action-btns" style="text-align: center;">
-                        <a href="#" title="Edit"><i class="fas fa-edit"></i></a>
-                        <a href="#" title="Delete"><i class="fas fa-trash-alt"></i></a>
-                    </td>
-                    <td><strong>${item.docNo}</strong></td>
-                    <td>${window.formatDateDisplay(item.date)}</td>
-                    <td>${item.employeeCode} - ${item.employeeName}</td>
-                    <td>${item.loanTypeName}</td>
-                    <td class="num-col">${item.loanAmount.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-                    <td>${window.formatDateDisplay(item.neededBy)}</td>
-                    <td>${window.formatDateDisplay(item.emiStartDate)}</td>
-                    <td><span class="badge badge-info">${item.emiType}</span></td>
-                    <td class="num-col">${item.noOfMonths}</td>
-                    <td class="num-col">${item.emiAmount.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-                    <td>${item.guarantorName}</td>
-                    <td><span class="badge ${badgeClass}">${item.status}</span></td>
-                </tr>`;
-                tbody.append(row);
+    // Seed savedLoanRequests from the demo JSON exactly once, then only ever read/write
+    // localStorage from here on — matching the pattern used by every other prototype module
+    // (LeaveAdjustments, Claim, BusinessTrip, etc). Assigns each seed row a stable id so it can
+    // be edited/deleted the same way a user-created row can.
+    function seedLoanRequestsIfNeeded(callback) {
+        if (localStorage.getItem('savedLoanRequests')) {
+            callback();
+            return;
+        }
+        $.getJSON('/api-assets/loan_requests.json').done(function(data) {
+            var seeded = (Array.isArray(data) ? data : []).map(function(item, idx) {
+                return Object.assign({ id: Date.now() + idx }, item);
             });
+            localStorage.setItem('savedLoanRequests', JSON.stringify(seeded));
+            callback();
+        }).fail(function() {
+            localStorage.setItem('savedLoanRequests', '[]');
+            callback();
+        });
+    }
 
-            $('#stat-total').text(data.length);
-            $('#stat-approved').text(appCount);
-            $('#stat-pending').text(pendCount);
-            $('#stat-amount').text('$' + totalAmt.toLocaleString('en-US', {minimumFractionDigits: 2}));
+    function loadGridData() {
+        var data = JSON.parse(localStorage.getItem('savedLoanRequests') || '[]');
+        loanRequestsTable.clear();
 
-            $('#loan-requests-grid').DataTable({
-                pageLength: 10,
-                order: [[1, 'desc']],
-                language: {
-                    search: "_INPUT_",
-                    searchPlaceholder: "Search loan requests..."
+        var totalAmt = 0;
+        var appCount = 0;
+        var pendCount = 0;
+
+        data.forEach(function(item) {
+            var amount = parseFloat(item.loanAmount) || 0;
+            var emiAmount = parseFloat(item.emiAmount) || 0;
+            totalAmt += amount;
+            if (item.status === 'Approved') appCount++;
+            else pendCount++;
+
+            var badgeClass = item.status === 'Approved' ? 'badge-success' : 'badge-warning';
+
+            var actionHtml = '<div class="action-btns" style="text-align:center;">' +
+                '<a href="' + createLoanRequestUrl + '?id=' + item.id + '" title="Edit"><i class="fas fa-edit"></i></a> ' +
+                '<a href="#" class="remove-item-btn" data-id="' + item.id + '" data-docno="' + (item.docNo || '') + '" title="Delete"><i class="fas fa-trash-alt"></i></a>' +
+                '</div>';
+
+            loanRequestsTable.row.add([
+                actionHtml,
+                '<strong>' + (item.docNo || '-') + '</strong>',
+                window.formatDateDisplay(item.date),
+                (item.employeeCode || '') + ' - ' + (item.employeeName || ''),
+                item.loanTypeName || '-',
+                amount.toLocaleString('en-US', {minimumFractionDigits: 2}),
+                window.formatDateDisplay(item.neededBy),
+                window.formatDateDisplay(item.emiStartDate),
+                '<span class="badge badge-info">' + (item.emiType || '-') + '</span>',
+                item.noOfMonths || '-',
+                emiAmount.toLocaleString('en-US', {minimumFractionDigits: 2}),
+                item.guarantorName || '-',
+                '<span class="badge ' + badgeClass + '">' + (item.status || 'Pending') + '</span>'
+            ]);
+        });
+
+        $('#stat-total').text(data.length);
+        $('#stat-approved').text(appCount);
+        $('#stat-pending').text(pendCount);
+        $('#stat-amount').text('$' + totalAmt.toLocaleString('en-US', {minimumFractionDigits: 2}));
+
+        loanRequestsTable.draw(false);
+    }
+
+    $(document).ready(function() {
+        loanRequestsTable = $('#loan-requests-grid').DataTable({
+            pageLength: 10,
+            order: [[1, 'desc']],
+            language: {
+                search: "_INPUT_",
+                searchPlaceholder: "Search loan requests..."
+            },
+            columnDefs: [
+                { orderable: false, targets: 0 }
+            ]
+        });
+
+        seedLoanRequestsIfNeeded(loadGridData);
+
+        $('#loan-requests-grid tbody').on('click', '.remove-item-btn', function (e) {
+            e.preventDefault();
+            var id = $(this).data('id');
+            var docNo = $(this).data('docno');
+
+            alertify.confirm('Are you sure you want to delete loan request: ' + docNo + '?', function (confirmed) {
+                if (confirmed) {
+                    var data = JSON.parse(localStorage.getItem('savedLoanRequests') || '[]');
+                    data = data.filter(function(r) { return String(r.id) !== String(id); });
+                    localStorage.setItem('savedLoanRequests', JSON.stringify(data));
+                    loadGridData();
+                    alertify.log('Loan Request ' + docNo + ' deleted successfully.', 'success', 3500);
                 }
             });
         });

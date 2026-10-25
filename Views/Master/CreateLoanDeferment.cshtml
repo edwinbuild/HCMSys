@@ -89,7 +89,7 @@
                         <i class="fas fa-arrow-left fa-sm text-white-50 mr-1"></i> Back to List
                     </a>
                     <button type="button" class="btn btn-success btn-sm shadow-sm ml-2" onclick="saveDeferment()">
-                        <i class="fas fa-check fa-sm text-white-50 mr-1"></i> Save Deferment
+                        <i class="fas fa-check fa-sm text-white-50 mr-1"></i> <span id="save-btn-label">Save Deferment</span>
                     </button>
                 </div>
             </div>
@@ -231,14 +231,19 @@
     var disbursementsData = [];
     var selectedDisbursement = null;
 
-    $(document).ready(function() {
-        initHeader();
+    // Edit mode: ?docNo=<defermentNo in savedLoanDeferments> means "edit this existing
+    // deferment" instead of creating a new one, navigated to directly from
+    // LoanDefermentIndex's Edit link.
+    var urlParams = new URLSearchParams(window.location.search);
+    var editDocNo = urlParams.get('docNo') || '';
+    var isEditMode = !!editDocNo;
 
-        $.getJSON('/api-assets/loan_disbursements.json', function(res) {
-            var staticDisbs = Array.isArray(res) ? (Array.isArray(res[0]) ? res[0] : res) : [];
-            var savedDisbs = JSON.parse(localStorage.getItem('savedLoanDisbursements') || '[]');
-            disbursementsData = savedDisbs.concat(staticDisbs);
-            
+    $(document).ready(function() {
+        if (!isEditMode) {
+            initHeader();
+        }
+
+        function populateDisbursementDropdown() {
             var disbSelect = $('#hdr-disbursementno');
             disbSelect.empty().append('<option value="">Select Disbursement No...</option>');
             if (Array.isArray(disbursementsData)) {
@@ -250,18 +255,20 @@
                 });
             }
             disbSelect.select2({ width: '100%' });
-        }).fail(function() {
+
+            if (isEditMode) {
+                loadDefermentForEdit(editDocNo);
+            }
+        }
+
+        $.getJSON('/api-assets/loan_disbursements.json', function(res) {
+            var staticDisbs = Array.isArray(res) ? (Array.isArray(res[0]) ? res[0] : res) : [];
             var savedDisbs = JSON.parse(localStorage.getItem('savedLoanDisbursements') || '[]');
-            disbursementsData = savedDisbs;
-            var disbSelect = $('#hdr-disbursementno');
-            disbSelect.empty().append('<option value="">Select Disbursement No...</option>');
-            disbursementsData.forEach(function(d) {
-                var dNo = d.disbursementNo || d.docNo || '';
-                var eName = d.employeeName || d.employee || 'Employee';
-                var lName = d.loanTypeName || d.loanType || 'Loan';
-                disbSelect.append(`<option value="${dNo}">${dNo} - ${eName} (${lName})</option>`);
-            });
-            disbSelect.select2({ width: '100%' });
+            disbursementsData = savedDisbs.concat(staticDisbs);
+            populateDisbursementDropdown();
+        }).fail(function() {
+            disbursementsData = JSON.parse(localStorage.getItem('savedLoanDisbursements') || '[]');
+            populateDisbursementDropdown();
         });
     });
 
@@ -277,6 +284,40 @@
         var saved = JSON.parse(localStorage.getItem('savedLoanDeferments') || '[]');
         var seq = String(saved.length + 1).padStart(5, '0');
         $('#hdr-docno').val('DEF-' + mm + '-' + yy + '-' + seq);
+
+        // flatpickr is never attached to these inputs, so set today's date directly.
+        var todayStr = dd + '-' + mmm + '-' + yyyy;
+        $('#hdr-date').val(todayStr);
+        $('#hdr-postdate').val(todayStr);
+    }
+
+    // Holds the previously-saved per-installment modified amounts while editing, so
+    // generateDefermentGrid() can restore them instead of resetting every row back to its
+    // default (full) installment amount. Consumed once, then cleared.
+    var pendingModifiedAmounts = null;
+
+    // Loads an existing deferment (by its defermentNo) back into the form.
+    function loadDefermentForEdit(docNo) {
+        var existingData = JSON.parse(localStorage.getItem('savedLoanDeferments') || '[]');
+        var item = existingData.find(function(d) { return d.defermentNo === docNo; });
+
+        if (!item) {
+            alertify.log('That Loan Deferment record could not be found.', 'error', 5000);
+            window.location.href = '@Url.Action("LoanDefermentIndex", "Master")';
+            return;
+        }
+
+        $('.page-title-text').html('<i class="fas fa-calendar-minus fa-sm text-warning mr-2"></i> Edit Loan Deferment');
+        $('#save-btn-label').text('Update Deferment');
+        $('#hdr-docno').val(item.defermentNo || '');
+        $('#hdr-date').val(item.date || '');
+
+        pendingModifiedAmounts = Array.isArray(item.installments) ? item.installments : null;
+
+        var disbOption = $('#hdr-disbursementno option').filter(function() { return $(this).val() === item.disbursementNo; });
+        if (disbOption.length > 0) {
+            $('#hdr-disbursementno').val(item.disbursementNo).trigger('change');
+        }
     }
 
     function onDisbursementChange() {
@@ -338,8 +379,11 @@
             totalI += monthlyInterest;
             totalOrig += originalInstallment;
 
-            // Default modified amount equal to original installment
-            var modAmt = originalInstallment;
+            // Default modified amount equal to original installment, unless a previously-saved
+            // value is being restored for this row while editing.
+            var modAmt = (pendingModifiedAmounts && pendingModifiedAmounts[i - 1] !== undefined)
+                ? pendingModifiedAmounts[i - 1]
+                : originalInstallment;
             totalMod += modAmt;
 
             var row = `<tr>
@@ -354,6 +398,8 @@
             </tr>`;
             tbody.append(row);
         }
+
+        pendingModifiedAmounts = null;
 
         $('#foot-principal').text(formatNumber(totalP));
         $('#foot-interest').text(formatNumber(totalI));
@@ -382,7 +428,38 @@
             alertify.log('Please select a valid Disbursement No!', 'error', 5000);
             return;
         }
-        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: 'Loan Deferment saved successfully!', type: 'success' }));
+
+        var installments = $('.mod-amt-input').map(function() { return parseNumber($(this).val()); }).get();
+
+        var record = {
+            defermentNo: $('#hdr-docno').val(),
+            date: $('#hdr-date').val(),
+            disbursementNo: selectedDisbursement.disbursementNo,
+            employeeCode: (selectedDisbursement.employeeCode || ''),
+            employeeName: (selectedDisbursement.employeeName || ''),
+            loanTypeName: selectedDisbursement.loanTypeName || '',
+            originalAmount: parseNumber($('#foot-original').text()),
+            modifiedAmount: parseNumber($('#foot-modified').text()),
+            installments: installments,
+            status: 'Active Deferment'
+        };
+
+        var existingData = JSON.parse(localStorage.getItem('savedLoanDeferments') || '[]');
+
+        if (isEditMode) {
+            var idx = existingData.findIndex(function(d) { return d.defermentNo === editDocNo; });
+            if (idx > -1) {
+                existingData[idx] = record;
+            } else {
+                existingData.push(record);
+            }
+        } else {
+            existingData.push(record);
+        }
+
+        localStorage.setItem('savedLoanDeferments', JSON.stringify(existingData));
+
+        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: isEditMode ? 'Loan Deferment updated successfully!' : 'Loan Deferment saved successfully!', type: 'success' }));
         var targetUrl = '@Url.Action("LoanDefermentIndex", "Master")';
         if (typeof loadPageContent === 'function') {
             loadPageContent(targetUrl, true);

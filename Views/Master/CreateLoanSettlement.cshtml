@@ -89,7 +89,7 @@
                         <i class="fas fa-arrow-left fa-sm text-white-50 mr-1"></i> Back to List
                     </a>
                     <button type="button" class="btn btn-success btn-sm shadow-sm ml-2" onclick="saveSettlement()">
-                        <i class="fas fa-check fa-sm text-white-50 mr-1"></i> Save Settlement
+                        <i class="fas fa-check fa-sm text-white-50 mr-1"></i> <span id="save-btn-label">Save Settlement</span>
                     </button>
                 </div>
             </div>
@@ -231,14 +231,19 @@
     var disbursementsData = [];
     var selectedDisbursement = null;
 
-    $(document).ready(function() {
-        initHeader();
+    // Edit mode: ?docNo=<settlementNo in savedLoanSettlements> means "edit this existing
+    // settlement" instead of creating a new one, navigated to directly from
+    // LoanSettlementIndex's Edit link.
+    var urlParams = new URLSearchParams(window.location.search);
+    var editDocNo = urlParams.get('docNo') || '';
+    var isEditMode = !!editDocNo;
 
-        $.getJSON('/api-assets/loan_disbursements.json', function(res) {
-            var staticDisbs = Array.isArray(res) ? (Array.isArray(res[0]) ? res[0] : res) : [];
-            var savedDisbs = JSON.parse(localStorage.getItem('savedLoanDisbursements') || '[]');
-            disbursementsData = savedDisbs.concat(staticDisbs);
-            
+    $(document).ready(function() {
+        if (!isEditMode) {
+            initHeader();
+        }
+
+        function populateDisbursementDropdown() {
             var disbSelect = $('#hdr-disbursementno');
             disbSelect.empty().append('<option value="">Select Disbursement No...</option>');
             if (Array.isArray(disbursementsData)) {
@@ -250,18 +255,20 @@
                 });
             }
             disbSelect.select2({ width: '100%' });
-        }).fail(function() {
+
+            if (isEditMode) {
+                loadSettlementForEdit(editDocNo);
+            }
+        }
+
+        $.getJSON('/api-assets/loan_disbursements.json', function(res) {
+            var staticDisbs = Array.isArray(res) ? (Array.isArray(res[0]) ? res[0] : res) : [];
             var savedDisbs = JSON.parse(localStorage.getItem('savedLoanDisbursements') || '[]');
-            disbursementsData = savedDisbs;
-            var disbSelect = $('#hdr-disbursementno');
-            disbSelect.empty().append('<option value="">Select Disbursement No...</option>');
-            disbursementsData.forEach(function(d) {
-                var dNo = d.disbursementNo || d.docNo || '';
-                var eName = d.employeeName || d.employee || 'Employee';
-                var lName = d.loanTypeName || d.loanType || 'Loan';
-                disbSelect.append(`<option value="${dNo}">${dNo} - ${eName} (${lName})</option>`);
-            });
-            disbSelect.select2({ width: '100%' });
+            disbursementsData = savedDisbs.concat(staticDisbs);
+            populateDisbursementDropdown();
+        }).fail(function() {
+            disbursementsData = JSON.parse(localStorage.getItem('savedLoanDisbursements') || '[]');
+            populateDisbursementDropdown();
         });
     });
 
@@ -277,6 +284,40 @@
         var saved = JSON.parse(localStorage.getItem('savedLoanSettlements') || '[]');
         var seq = String(saved.length + 1).padStart(5, '0');
         $('#hdr-docno').val('STL-' + mm + '-' + yy + '-' + seq);
+
+        // flatpickr is never attached to these inputs, so set today's date directly.
+        var todayStr = dd + '-' + mmm + '-' + yyyy;
+        $('#hdr-date').val(todayStr);
+        $('#hdr-postdate').val(todayStr);
+    }
+
+    // Holds the previously-saved per-installment settlement amounts while editing, so
+    // generateSettlementGrid() can restore them instead of resetting every row back to its
+    // default (full) installment amount. Consumed once, then cleared.
+    var pendingSettlementAmounts = null;
+
+    // Loads an existing settlement (by its settlementNo) back into the form.
+    function loadSettlementForEdit(docNo) {
+        var existingData = JSON.parse(localStorage.getItem('savedLoanSettlements') || '[]');
+        var item = existingData.find(function(s) { return s.settlementNo === docNo; });
+
+        if (!item) {
+            alertify.log('That Loan Settlement record could not be found.', 'error', 5000);
+            window.location.href = '@Url.Action("LoanSettlementIndex", "Master")';
+            return;
+        }
+
+        $('.page-title-text').html('<i class="fas fa-file-contract fa-sm text-danger mr-2"></i> Edit Loan Settlement');
+        $('#save-btn-label').text('Update Settlement');
+        $('#hdr-docno').val(item.settlementNo || '');
+        $('#hdr-date').val(item.date || '');
+
+        pendingSettlementAmounts = Array.isArray(item.installments) ? item.installments : null;
+
+        var disbOption = $('#hdr-disbursementno option').filter(function() { return $(this).val() === item.disbursementNo; });
+        if (disbOption.length > 0) {
+            $('#hdr-disbursementno').val(item.disbursementNo).trigger('change');
+        }
     }
 
     function onDisbursementChange() {
@@ -338,6 +379,10 @@
             totalI += monthlyInterest;
             totalOrig += originalInstallment;
 
+            var restoredAmt = (pendingSettlementAmounts && pendingSettlementAmounts[i - 1] !== undefined)
+                ? pendingSettlementAmounts[i - 1]
+                : originalInstallment;
+
             var row = `<tr>
                 <td style="text-align: center;">${i}</td>
                 <td>${dateFormatted}</td>
@@ -345,11 +390,13 @@
                 <td class="num-col">${formatNumber(monthlyInterest)}</td>
                 <td class="num-col font-weight-bold">${formatNumber(originalInstallment)}</td>
                 <td class="num-col" style="background-color: #f8d7da;">
-                    <input type="text" class="form-control grid-input number-align stl-amt-input" data-index="${i}" value="${formatNumber(originalInstallment)}" onkeyup="recalculateTotals()" onblur="this.value = formatNumber(parseNumber(this.value)); recalculateTotals();" />
+                    <input type="text" class="form-control grid-input number-align stl-amt-input" data-index="${i}" value="${formatNumber(restoredAmt)}" onkeyup="recalculateTotals()" onblur="this.value = formatNumber(parseNumber(this.value)); recalculateTotals();" />
                 </td>
             </tr>`;
             tbody.append(row);
         }
+
+        pendingSettlementAmounts = null;
 
         $('#foot-principal').text(formatNumber(totalP));
         $('#foot-interest').text(formatNumber(totalI));
@@ -378,7 +425,46 @@
             alertify.log('Please select a valid Disbursement No!', 'error', 5000);
             return;
         }
-        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: 'Loan Settlement completed successfully!', type: 'success' }));
+
+        var installments = $('.stl-amt-input').map(function() { return parseNumber($(this).val()); }).get();
+
+        var record = {
+            settlementNo: $('#hdr-docno').val(),
+            date: $('#hdr-date').val(),
+            disbursementNo: selectedDisbursement.disbursementNo,
+            employeeCode: (selectedDisbursement.employeeCode || ''),
+            employeeName: (selectedDisbursement.employeeName || ''),
+            loanTypeName: selectedDisbursement.loanTypeName || '',
+            originalTotal: parseNumber($('#foot-original').text()),
+            settledAmount: parseNumber($('#foot-settlement').text()),
+            installments: installments,
+            status: 'Settled & Closed'
+        };
+
+        var existingData = JSON.parse(localStorage.getItem('savedLoanSettlements') || '[]');
+
+        if (isEditMode) {
+            var idx = existingData.findIndex(function(s) { return s.settlementNo === editDocNo; });
+            if (idx > -1) {
+                existingData[idx] = record;
+            } else {
+                existingData.push(record);
+            }
+        } else {
+            existingData.push(record);
+
+            // Mark the source disbursement as closed so it's not left looking active forever.
+            var savedDisbs = JSON.parse(localStorage.getItem('savedLoanDisbursements') || '[]');
+            var disbIdx = savedDisbs.findIndex(function(d) { return d.disbursementNo === record.disbursementNo; });
+            if (disbIdx > -1) {
+                savedDisbs[disbIdx].status = 'Settled & Closed';
+                localStorage.setItem('savedLoanDisbursements', JSON.stringify(savedDisbs));
+            }
+        }
+
+        localStorage.setItem('savedLoanSettlements', JSON.stringify(existingData));
+
+        sessionStorage.setItem('pendingAlert', JSON.stringify({ msg: isEditMode ? 'Loan Settlement updated successfully!' : 'Loan Settlement completed successfully!', type: 'success' }));
         var targetUrl = '@Url.Action("LoanSettlementIndex", "Master")';
         if (typeof loadPageContent === 'function') {
             loadPageContent(targetUrl, true);
