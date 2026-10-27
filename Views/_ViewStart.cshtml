@@ -1,3 +1,10 @@
 ﻿@{
-    Layout = "_Layout";
+    // SPA-style navigation (loadPageContent in _Layout.cshtml) fetches pages via AJAX and swaps
+    // just the inner content into #main-page-container. Previously this still rendered the full
+    // _Layout for every such request, so every navigation re-parsed and re-executed the layout's
+    // own global scripts a second time (duplicate setInterval timers, duplicate function
+    // re-declarations, and a much larger response than necessary). Skip the layout for those
+    // requests so only the view's own markup is returned.
+    var isAjaxNavigation = Context.Request.Headers["X-Requested-With"] == "XMLHttpRequest";
+    Layout = isAjaxNavigation ? null : "_Layout";
 }

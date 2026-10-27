@@ -53,6 +53,10 @@
     <link href="~/lib/datatables/css/jquery.dataTables.css" rel="stylesheet" />
     <script src="~/lib/select2/js/select2.min.js"></script>
     <link href="~/lib/select2/css/select2.min.css" rel="stylesheet" />
+    <!-- Loaded globally (not per-view) so it's already available the moment a page's own inline
+         script runs after SPA navigation, instead of racing an independently re-fetched copy. -->
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <style>
         /* Global Select2 Styling matching SB Admin 2 & Modern Design */
         .select2-container--default .select2-selection--single {
@@ -156,9 +160,11 @@
         function Time() {
             var _date = new Date();
             var _time = _date.toLocaleDateString("es-CL") + ' ' + _date.toLocaleTimeString().toUpperCase();
- 
-            document.getElementById("eg").innerHTML = _time;
-            // $('#eg').val(_time);
+
+            // The interval below starts at page-load time, before the HTML parser has necessarily
+            // reached this element yet, so guard against it not existing on the very first tick(s).
+            var el = document.getElementById("eg");
+            if (el) el.innerHTML = _time;
         }
         document.addEventListener("DOMContentLoaded", function () {
  
